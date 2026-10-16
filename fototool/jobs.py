@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -39,6 +40,41 @@ DRY_TEXT = {
     "ueberschrieben": "Würde überschrieben",
     "papierkorb": "Würde in Papierkorb",
 }
+
+
+class AccessError(PermissionError):
+    """Ordner nicht lesbar/erreichbar – Lauf wird abgebrochen statt falscher Ergebnisse."""
+
+
+ACCESS_HINT = ("\n\nFotoTool braucht Zugriff: Systemeinstellungen → Datenschutz & Sicherheit → "
+               "Festplattenvollzugriff → FotoTool.app hinzufügen (bzw. bei Nachfrage „Erlauben“), "
+               "dann FotoTool neu starten.")
+
+
+def ensure_access(path: Path, must_exist: bool = True) -> None:
+    """Prüft, ob ein Ordner wirklich lesbar ist (bzw. angelegt werden kann)."""
+    parts = path.parts
+    if len(parts) >= 3 and parts[1] == "Volumes" and not os.path.ismount(os.path.join("/", *parts[:3])):
+        raise AccessError(f"Laufwerk „{parts[2]}“ ist nicht angeschlossen: {path}")
+    try:
+        os.stat(path)
+    except FileNotFoundError:
+        if must_exist:
+            raise FileNotFoundError(f"Ordner nicht gefunden: {path}")
+        parent = path.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        ensure_access(parent)
+        if not os.access(parent, os.W_OK):
+            raise AccessError(f"Keine Schreibrechte in {parent}" + ACCESS_HINT)
+        return
+    except PermissionError:
+        raise AccessError(f"Kein Zugriff auf {path}" + ACCESS_HINT)
+    if path.is_dir():
+        try:
+            os.listdir(path)
+        except PermissionError:
+            raise AccessError(f"Kein Zugriff auf {path}" + ACCESS_HINT)
 
 
 def human_size(n: float) -> str:
@@ -120,13 +156,14 @@ class Job:
         self.hasher = Hasher(cfg, self.cache)
         self.scanner = Scanner(cfg)
         self.method = cfg.get("vergleich.methode", "hash")
+        self.last_scan_errors: list[str] = []
 
     def scan(self, root: Path, res: JobResult) -> list[FileEntry]:
-        if not root.exists():
-            raise FileNotFoundError(f"Ordner nicht gefunden: {root}")
+        ensure_access(root)
         self.ctx.message(f"Durchsuche {root} …")
         entries, errors = self.scanner.scan(root, self.ctx)
         res.errors += errors
+        self.last_scan_errors = errors
         self.ctx.message(f"  {len(entries)} Dateien ({human_size(sum(e.size for e in entries))})")
         if errors:
             self.ctx.message(f"  ⚠️ {len(errors)} nicht lesbar (z.B. {errors[0]})", logging.WARNING)
@@ -187,11 +224,24 @@ class SyncJob(Job):
             validate(p.muster)
             if p.dateiname:
                 validate(p.dateiname)
+        ensure_access(target, must_exist=False)  # zuerst prüfen, bevor lange gescannt wird
         src_entries: list[FileEntry] = []
         for s in sources:
             entries = self.scan(s, res)
             src_entries += [e for e in entries if not e.path.is_relative_to(target)]
-        tgt_entries = self.scan(target, res) if target.exists() else []
+        tgt_entries: list[FileEntry] = []
+        target_incomplete = 0
+        if target.exists():
+            tgt_entries = self.scan(target, res)
+            target_incomplete = len(self.last_scan_errors)
+        else:
+            self.ctx.message(f"Ziel existiert noch nicht und wird angelegt: {target}")
+        if target_incomplete:
+            msg = (f"{target_incomplete} Ordner/Dateien im Ziel nicht lesbar – dort vorhandene Dateien "
+                   f"würden fälschlich als fehlend gelten.")
+            if p.fehlende_kopieren and not p.probelauf:
+                raise AccessError(msg + " Abbruch, damit nichts doppelt kopiert wird." + ACCESS_HINT)
+            self.ctx.message("⚠️ " + msg, logging.WARNING)
         src_ids = {id(e) for e in src_entries}
 
         def need(g):  # nur Gruppen mit Quelldatei und mehr als einem Mitglied sind relevant
@@ -218,6 +268,8 @@ class SyncJob(Job):
                        "Dateien in Quellen": len(src_entries), "Dateien im Ziel": len(tgt_entries),
                        "Fehlen im Ziel": len(missing),
                        "Größe fehlend": human_size(sum(e.size for e in missing))}
+        if target_incomplete:
+            res.summary["⚠️ Ziel unvollständig gelesen"] = f"{target_incomplete} nicht lesbar – Ergebnis unsicher"
         self.ctx.message(f"→ {len(missing)} Dateien fehlen im Ziel ({res.summary['Größe fehlend']})")
 
         ops = journal = None
@@ -309,6 +361,7 @@ class SortJob(Job):
         if p.dateiname:
             validate(p.dateiname)
         src, target = Path(p.quelle).expanduser(), Path(p.ziel).expanduser()
+        ensure_access(target, must_exist=False)
         entries = self.scan(src, res)
         if target != src and target.is_relative_to(src):
             entries = [e for e in entries if not e.path.is_relative_to(target)]

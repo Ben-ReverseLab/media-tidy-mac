@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fototool.config import Config, diff, dumps_toml, load_defaults, merge, migrate
 from fototool.context import RunContext
-from fototool.jobs import DupParams, SortParams, SyncParams, run_job
+from fototool.jobs import AccessError, DupParams, SortParams, SyncParams, run_job
 from fototool.journal import list_journals, undo
 from fototool.metadata import Meta, parse_exif_date
 from fototool.patterns import PatternError, PatternRenderer, validate
@@ -204,6 +204,40 @@ class JobTests(Base):
                       SortParams(str(src), str(dst), "{Typ}", "", "move", probelauf=False))
         self.assertTrue((src / "originals" / "a.jpg").exists())
         self.assertIn("Geschützt – nicht verändert", res.summary)
+
+
+
+class AccessTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.src, self.dst = self.tmp / "src", self.tmp / "dst"
+        write(self.src / "A.jpg", b"A" * 100)
+        write(self.dst / "geheim" / "A.jpg", b"A" * 100)
+
+    def tearDown(self):
+        for d in (self.dst, self.dst / "geheim"):
+            if d.exists():
+                d.chmod(0o755)
+        super().tearDown()
+
+    def test_unreadable_target_aborts(self):
+        self.dst.chmod(0)
+        for dry in (True, False):
+            with self.assertRaises(AccessError):
+                run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(self.src)], str(self.dst), probelauf=dry))
+
+    def test_partly_unreadable_target(self):
+        (self.dst / "geheim").chmod(0)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(self.src)], str(self.dst), probelauf=True))
+        self.assertIn("⚠️ Ziel unvollständig gelesen", res.summary)
+        with self.assertRaises(AccessError):
+            run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(self.src)], str(self.dst), probelauf=False))
+        self.assertEqual(list(self.dst.glob("src")), [])
+
+    def test_unmounted_volume(self):
+        with self.assertRaises(AccessError):
+            run_job(self.cfg, self.ctx, "abgleich",
+                    SyncParams([str(self.src)], "/Volumes/GibtsNicht123/Fotos", probelauf=True))
 
 
 if __name__ == "__main__":

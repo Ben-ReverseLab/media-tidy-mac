@@ -626,6 +626,10 @@ class App:
             except Cancelled:
                 self.q.put(("msg", "Abgebrochen."))
                 self.q.put(("done", None))
+            except (OSError, ValueError) as e:  # Zugriff fehlt, Ordner fehlt, Muster falsch
+                self.q.put(("msg", f"❌ {e}"))
+                self.q.put(("alert", str(e)))
+                self.q.put(("done", None))
             except Exception as e:  # noqa: BLE001 – alles anzeigen statt abstürzen
                 import logging
                 logging.getLogger("fototool").exception("Fehler im Lauf")
@@ -650,6 +654,8 @@ class App:
                         self.prog.configure(mode="indeterminate")
                         self.prog.step(5)
                         self.prog_label.configure(text=f"{phase}: {done} Dateien")
+                elif kind == "alert":
+                    messagebox.showerror("FotoTool", data)
                 elif kind == "done":
                     self._finished(data)
         except queue.Empty:

@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     except Cancelled:
         print("Abgebrochen.")
         return 130
-    except (FileNotFoundError, ValueError) as e:
+    except (OSError, ValueError) as e:
         print(f"Fehler: {e}", file=sys.stderr)
         return 2
     print()
