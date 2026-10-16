@@ -294,7 +294,9 @@ class SyncJob(Job):
         else:
             for e in missing:
                 res.rows.append({"Status": STATUS_TEXT["fehlt"], "Datei": str(e.path), "Größe": human_size(e.size)})
-        return self.finish(res, ops, journal, target if target.exists() else None, p.probelauf, self.columns)
+        # Bericht nur ins Ziel, wenn dort auch etwas kopiert wurde – sonst in den Datenordner
+        report_target = target if (ops and target.exists()) else None
+        return self.finish(res, ops, journal, report_target, p.probelauf, self.columns)
 
 
 # --- 2. Duplikate ------------------------------------------------------------
