@@ -248,7 +248,10 @@ class SyncJob(Job):
             return len(g) > 1 and any(id(e) in src_ids for e in g)
 
         self.ctx.message("Vergleiche Inhalte …")
-        groups = self.group(src_entries + tgt_entries, res, need)
+        if self.method == "hash":
+            groups = self.hasher.match_sync(src_entries, tgt_entries, self.ctx, res.errors)
+        else:
+            groups = self.group(src_entries + tgt_entries, res, need)
         missing: list[FileEntry] = []
         for g in groups:
             in_src = [e for e in g if id(e) in src_ids]

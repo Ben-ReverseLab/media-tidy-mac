@@ -207,6 +207,40 @@ class JobTests(Base):
 
 
 
+class MatchSyncTests(Base):
+    def _setup(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "A.CR3", b"A" * 5000)
+        for i in range(4):
+            write(dst / f"k{i}" / "A.CR3", b"A" * 5000)
+        write(dst / "fast_gleich.CR3", b"A" * 2500 + b"X" + b"A" * 2499)  # gleicher Anfang/Ende
+        return src, dst
+
+    def test_stops_after_first_target_match(self):
+        from fototool.hashing import Hasher
+        src, dst = self._setup()
+        sc, _ = Scanner(self.cfg).scan(src, self.ctx)
+        tc, _ = Scanner(self.cfg).scan(dst, self.ctx)
+        h = Hasher(self.cfg)
+        reads = []
+        orig = h.full_hash_file
+        h.full_hash_file = lambda p: reads.append(p) or orig(p)
+        groups = h.match_sync(sc, tc, self.ctx, [])
+        g = next(g for g in groups if sc[0] in g)
+        self.assertEqual(len(g), 2)
+        self.assertLessEqual(len(reads), 3)  # Quelle + höchstens 2 Ziele statt 5
+
+    def test_full_hash_detects_near_identical(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "A.CR3", b"A" * 5000)
+        write(dst / "B.CR3", b"A" * 2500 + b"X" + b"A" * 2499)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), False, probelauf=True))
+        self.assertEqual(res.summary["Fehlen im Ziel"], 1)
+        self.cfg.set("vergleich.voller_hash", False)  # Schnellmodus: gilt als gleich
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), False, probelauf=True))
+        self.assertEqual(res.summary["Fehlen im Ziel"], 0)
+
+
 class AccessTests(Base):
     def setUp(self):
         super().setUp()

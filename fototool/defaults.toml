@@ -51,8 +51,15 @@ hash_algorithmus = "blake2b"
 teilhash_kb = 1024
 # Puffergröße beim Lesen in KB
 lesepuffer_kb = 4096
-# Parallele Lese-Threads (1 ist für USB-Festplatten meist am schnellsten)
-threads = 2
+# Parallele Lese-Threads für interne SSD
+threads = 4
+# Parallele Lese-Threads, sobald externe Laufwerke (/Volumes) beteiligt sind (Festplatten: 1)
+threads_extern = 1
+# Nach gleichem Teil-Hash zur Sicherheit die ganze Datei vergleichen.
+# false = deutlich schneller (Größe + Anfang + Ende identisch gilt als gleich), minimal unsicherer
+voller_hash = true
+# Prüfsummen-Cache alle n Dateien speichern (Fortschritt bleibt bei Absturz erhalten)
+cache_speichern_alle = 100
 
 [metadaten]
 # Reihenfolge der Quellen für das Aufnahmedatum; "datei_mtime" = Änderungsdatum

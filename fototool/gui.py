@@ -649,7 +649,7 @@ class App:
                     phase, done, total = data
                     if total:
                         self.prog.configure(mode="determinate", maximum=total, value=done)
-                        self.prog_label.configure(text=f"{phase}: {done} / {total}")
+                        self.prog_label.configure(text=f"{phase}: {done} / {total}{self._eta(phase, done, total)}")
                     else:
                         self.prog.configure(mode="indeterminate")
                         self.prog.step(5)
@@ -661,6 +661,20 @@ class App:
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
+
+    def _eta(self, phase: str, done: int, total: int) -> str:
+        """Restzeit-Schätzung je Phase."""
+        import time
+        now = time.monotonic()
+        if getattr(self, "_eta_phase", None) != phase or done < getattr(self, "_eta_done0", 0):
+            self._eta_phase, self._eta_t0, self._eta_done0 = phase, now, done
+            return ""
+        elapsed, step = now - self._eta_t0, done - self._eta_done0
+        if elapsed < 5 or step <= 0:
+            return ""
+        rest = elapsed / step * (total - done)
+        text = f"{rest / 60:.0f} min" if rest >= 90 else f"{rest:.0f} s"
+        return f"  –  noch ca. {text}"
 
     def _finished(self, res: JobResult | None):
         self.start_btn.configure(state="normal")

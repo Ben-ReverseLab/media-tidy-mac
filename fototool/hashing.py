@@ -55,8 +55,12 @@ class Hasher:
         hashlib.new(self.algo)  # prüft, ob Algorithmus existiert
         self.partial = int(cfg.get("vergleich.teilhash_kb", 1024)) * 1024
         self.bufsize = max(64, int(cfg.get("vergleich.lesepuffer_kb", 4096))) * 1024
-        self.threads = max(1, int(cfg.get("vergleich.threads", 2)))
+        self.threads = max(1, int(cfg.get("vergleich.threads", 4)))
+        self.threads_ext = max(1, int(cfg.get("vergleich.threads_extern", 1)))
+        self.full = bool(cfg.get("vergleich.voller_hash", True))
+        self.commit_every = max(1, int(cfg.get("vergleich.cache_speichern_alle", 100)))
         self.cache = cache
+        self._since_commit = 0
 
     def full_hash_file(self, path: Path) -> str:
         h = hashlib.new(self.algo)
@@ -82,6 +86,10 @@ class Hasher:
         d = self.full_hash_file(e.path) if kind == "full" else self._partial_hash(e)
         if self.cache:
             self.cache.put(e, self.algo, kind, d)
+            self._since_commit += 1
+            if self._since_commit >= self.commit_every:
+                self._since_commit = 0
+                self.cache.commit()
         return d
 
     def _refine(self, groups: list[list[FileEntry]], kind: str, ctx: RunContext,
@@ -91,7 +99,8 @@ class Hasher:
             return []
         digests: dict[int, str] = {}
         label = "Teilvergleich" if kind == "partial" else "Inhaltsvergleich"
-        with ThreadPoolExecutor(self.threads) as pool:
+        external = any(str(e.path).startswith("/Volumes/") for e in todo)
+        with ThreadPoolExecutor(self.threads_ext if external else self.threads) as pool:
             futures = {pool.submit(self.digest, e, kind): i for i, e in enumerate(todo)}
             for n, fut in enumerate(as_completed(futures), 1):
                 if ctx.cancelled:
@@ -105,8 +114,6 @@ class Hasher:
                     errors.append(f"{todo[i].path}: {err.strerror or err}")
                 if n % 20 == 0 or n == len(todo):
                     ctx.progress(label, n, len(todo))
-                    if self.cache and n % 500 == 0:
-                        self.cache.commit()
         if self.cache:
             self.cache.commit()
         out: list[list[FileEntry]] = []
@@ -131,11 +138,62 @@ class Hasher:
             by_size.setdefault(e.size, []).append(e)
         final = [g for g in by_size.values() if not need(g)]
         pending = [g for g in by_size.values() if need(g)]
-        for kind in ("partial", "full"):
+        for kind in ("partial", "full") if self.full else ("partial",):
             refined = self._refine(pending, kind, ctx, errors)
             final += [g for g in refined if not need(g)]
             pending = [g for g in refined if need(g)]
         return final + pending
+
+
+    def match_sync(self, sources: list[FileEntry], targets: list[FileEntry], ctx: RunContext,
+                   errors: list[str]) -> list[list[FileEntry]]:
+        """Wie group_identical, aber für Abgleich optimiert: Pro Quelldatei reicht EIN
+        bestätigter Treffer im Ziel – weitere Kopien im Ziel werden nicht gelesen."""
+        src_ids = {id(e) for e in sources}
+        by_size: dict[int, list[FileEntry]] = {}
+        for e in sources + targets:
+            by_size.setdefault(e.size, []).append(e)
+        out: list[list[FileEntry]] = []
+        pending = []
+        for g in by_size.values():
+            if any(id(e) in src_ids for e in g) and len(g) > 1:
+                pending.append(g)
+            else:
+                out.append(g)
+        partial_groups = self._refine(pending, "partial", ctx, errors)
+        if not self.full:
+            return out + partial_groups
+        todo = []
+        for g in partial_groups:
+            (todo if len(g) > 1 and any(id(e) in src_ids for e in g) else out).append(g)
+        for n, g in enumerate(todo, 1):
+            ctx.check()
+            srcs = [e for e in g if id(e) in src_ids]
+            tgts = [e for e in g if id(e) not in src_ids]
+            by_digest: dict[str, list[FileEntry]] = {}
+            for e in srcs:
+                try:
+                    by_digest.setdefault(self.digest(e, "full"), []).append(e)
+                except OSError as err:
+                    errors.append(f"{e.path}: {err.strerror or err}")
+            tgt_digest: dict[int, str] = {}
+            for d, same in by_digest.items():
+                match = None
+                for t in tgts:
+                    if id(t) not in tgt_digest:
+                        try:
+                            tgt_digest[id(t)] = self.digest(t, "full")
+                        except OSError as err:
+                            errors.append(f"{t.path}: {err.strerror or err}")
+                            tgt_digest[id(t)] = ""
+                    if tgt_digest[id(t)] == d:
+                        match = t
+                        break
+                out.append(same + ([match] if match else []))
+            ctx.progress("Inhaltsvergleich", n, len(todo))
+        if self.cache:
+            self.cache.commit()
+        return out
 
 
 def group_by_key(entries: Iterable[FileEntry], key: Callable[[FileEntry], Hashable]) -> list[list[FileEntry]]:
