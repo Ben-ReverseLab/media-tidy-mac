@@ -1,0 +1,142 @@
+# FotoTool – Standardeinstellungen.
+# Nicht hier ändern: eigene Werte gehören in ~/.fototool/config.toml
+# (oder im Programm unter "Einstellungen"). Fehlende Werte kommen von hier.
+
+version = 1
+
+[dateien]
+# Dateiendungen je Gruppe (klein geschrieben, ohne Punkt)
+foto = ["jpg", "jpeg", "heic", "heif", "png", "tif", "tiff", "webp", "gif", "bmp"]
+raw = ["cr3", "cr2", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "dng", "srw", "3fr", "iiq", "x3f"]
+video = ["mp4", "mov", "m4v", "avi", "mts", "m2ts", "3gp", "mkv"]
+sidecar = ["xmp", "aae"]
+# Welche Gruppen werden verarbeitet
+aktive_gruppen = ["foto", "raw", "video"]
+# Sidecars (z.B. .xmp) beim Kopieren/Verschieben mitnehmen
+sidecars_mitnehmen = true
+
+[scan]
+# Glob-Muster für Datei- und Ordnernamen, die übersprungen werden
+ignorieren = [
+  ".DS_Store", "._*", ".localized", "Thumbs.db", "desktop.ini",
+  ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems",
+  "*.lrdata", "*.lrcat", "*.lrcat-data", "Old Lightroom Catalogs",
+  "_Duplikate", "_FotoTool-Berichte",
+]
+# Versteckte Dateien/Ordner (Name beginnt mit ".") überspringen
+versteckte_ignorieren = true
+# Symbolischen Links folgen
+symlinks_folgen = false
+
+# Paket-Bibliotheken: Bei Ordnern mit dieser Endung werden nur die
+# angegebenen Unterpfade gelesen (Glob, relativ zum Paket).
+[[scan.bibliotheken]]
+endung = ".photoslibrary"
+unterordner = ["originals"]
+
+[[scan.bibliotheken]]
+endung = ".lrlibrary"
+unterordner = ["*/originals"]
+
+[[scan.bibliotheken]]
+endung = ".photolibrary"
+unterordner = ["Masters"]
+
+[vergleich]
+# "hash" (Inhalt, sicher) | "name_groesse" | "name_groesse_datum"
+methode = "hash"
+# "blake2b" | "sha256" | "md5" | "sha1"
+hash_algorithmus = "blake2b"
+# Teil-Hash: so viele KB vom Anfang und vom Ende als Vorfilter
+teilhash_kb = 1024
+# Puffergröße beim Lesen in KB
+lesepuffer_kb = 4096
+# Parallele Lese-Threads (1 ist für USB-Festplatten meist am schnellsten)
+threads = 2
+
+[metadaten]
+# Reihenfolge der Quellen für das Aufnahmedatum; "datei_mtime" = Änderungsdatum
+datum_felder = ["DateTimeOriginal", "CreateDate", "MediaCreateDate", "ModifyDate", "datei_mtime"]
+kamera_felder = ["Model", "UniqueCameraModel"]
+hersteller_felder = ["Make"]
+objektiv_felder = ["LensModel", "LensID", "Lens"]
+# Ersatztext, wenn kein Wert gefunden wurde
+unbekannt = "Unbekannt"
+# Hersteller-Namen aus dem Kameranamen entfernen ("Canon EOS R6" -> "EOS R6")
+hersteller_aus_kamera_entfernen = false
+# Dateien pro exiftool-Aufruf
+batch_groesse = 200
+
+# Umbenennung von Kameranamen (exakter Name = Anzeigename)
+[metadaten.kamera_namen]
+# "Canon EOS R6m2" = "R6 II"
+
+[muster]
+# Vorlagen für Ordnerstrukturen (Auswahl im Programm)
+vorlagen = [
+  "{Jahr}/{Jahr}-{Monat}-{Tag}",
+  "{Jahr}/{Monat}",
+  "{Jahr}/{Jahr}-{Monat}",
+  "{Kamera}/{Jahr}/{Jahr}-{Monat}-{Tag}",
+  "{Jahr}/{Kamera}",
+  "{Hersteller}/{Kamera}/{Jahr}",
+  "{Typ}/{Jahr}/{Monat}",
+  "{Objektiv}/{Jahr}",
+]
+standard = "{Jahr}/{Jahr}-{Monat}-{Tag}"
+# Dateinamen-Muster; leer = Originalname behalten
+# z.B. "{Jahr}{Monat}{Tag}_{Stunde}{Minute}{Sekunde}_{Name}"
+dateiname = ""
+# Monatsnamen für {MonatName}
+monatsnamen = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+# Zeichen, die in Ordnernamen ersetzt werden
+ungueltige_zeichen = ":/\\?*\"<>|"
+ersatzzeichen = "_"
+
+[aktionen]
+# Probelauf als Standard (nichts wird verändert, nur Vorschau)
+probelauf = true
+# Namenskollision bei unterschiedlichem Inhalt: "suffix" | "ueberspringen" | "ueberschreiben"
+kollision = "suffix"
+# Muster für Suffix; {n} = laufende Nummer
+suffix_muster = "_{n}"
+# Nach dem Kopieren Inhalt per Hash prüfen
+kopie_pruefen = true
+# Datei-Zeitstempel beim Kopieren erhalten
+zeitstempel_erhalten = true
+# Vor Lösch-/Verschiebe-/Überschreibaktionen nachfragen
+bestaetigen = true
+# Aus diesen Ordnern (und Bibliotheken) wird nie verschoben oder gelöscht (Glob auf Pfad)
+geschuetzt = ["*.photoslibrary*", "*.lrlibrary*", "*.photolibrary*"]
+
+[abgleich]
+# Fehlende Dateien: "struktur" (Ordnerstruktur behalten) | "muster" (nach Muster sortieren)
+fehlende_ablage = "struktur"
+# Bei "struktur": Name des Quellordners als oberste Ebene im Ziel anlegen
+quellordner_als_ebene = true
+
+[duplikate]
+# Welche Datei bleibt: "aeltestes" | "neuestes" | "kuerzester_pfad" | "laengster_pfad" | "erster"
+behalten = "aeltestes"
+# "bericht" | "verschieben" | "papierkorb"
+aktion = "bericht"
+# Zielordner (relativ zum geprüften Ordner) für aussortierte Duplikate
+ordner = "_Duplikate"
+
+[berichte]
+# Ordner für Berichte; leer = "_FotoTool-Berichte" im Zielordner
+ordner = ""
+csv = true
+html = true
+
+[pfade]
+# Leer = automatisch suchen
+exiftool = ""
+# Arbeitsdaten (Cache, Journal, Logs, Profile, Berichte vom Probelauf); leer = Einstellungsordner (~/.fototool)
+datenordner = ""
+# Lightroom-Classic-Kataloge (Glob). Beim Verschieben aus deren Ordnern wird gewarnt.
+lightroom_kataloge = ["~/Pictures/Lightroom/*.lrcat", "~/Pictures/Lightroom*/*.lrcat"]
+
+[oberflaeche]
+schriftgroesse = 13
+fenster = "1000x720"
