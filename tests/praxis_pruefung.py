@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fototool.config import Config, Profiles  # noqa: E402
-from fototool.context import Cancelled, RunContext  # noqa: E402
+from fototool.context import RunContext  # noqa: E402
 from fototool.jobs import AccessError, DupParams, SortParams, SyncParams, run_job  # noqa: E402
 from fototool.journal import list_journals, read_entries, undo  # noqa: E402
 from fototool.metadata import MetadataReader  # noqa: E402
@@ -295,10 +295,9 @@ def t_meta():
             ok(f"Ungültiges Muster '{bad_pat}' abgelehnt", True)
     ok("Abgelehntes Muster hat nichts angelegt", not (ROOT / "s2-ziel2").exists())
     # KW am Jahreswechsel: 2025-12-31 ist ISO-KW01 (2026)
-    res = run(c, "sortieren", SortParams(str(S), str(ROOT / "s2-ziel"), "{Jahr}/{KW}", "", "copy", True))
+    res = run(c, "sortieren", SortParams(str(S), str(ROOT / "s2-ziel"), "{KWJahr}/{KW}", "", "copy", True))
     zb = {Path(r["Datei"]).name: r.get("Ziel", "") for r in res.rows}.get("b.jpg", "")
-    if zb.endswith("2025/KW01/b.jpg"):
-        befund("Muster {Jahr}/{KW}: 31.12.2025 landet in 2025/KW01 (ISO-Woche gehört zu 2026)", zb)
+    ok("{KWJahr}/{KW}: 31.12.2025 → 2026/KW01", zb.endswith("2026/KW01/b.jpg"), zb)
 
 
 # --- 3. Abgleich ------------------------------------------------------------------
@@ -392,12 +391,12 @@ def t_sync():
     ok("Rückgängig ohne Probleme", not probs, probs)
     ok("Rückgängig: Ziel wieder wie vorher", snapshot(Z) == z0,
        set(snapshot(Z)) ^ set(z0))
-    leftovers = [p for p in (Z / "Import").rglob("*") if p.is_dir() and not any(p.iterdir())]
-    if leftovers:
-        befund("Rückgängig lässt leere Ordner zurück", [str(p.relative_to(Z)) for p in leftovers])
+    ok("Rückgängig entfernt die angelegten Ordner wieder", not (Z / "Import" / "sub").exists()
+       and (Z / "Import").is_dir(), [str(p.relative_to(Z)) for p in Z.rglob("*") if p.is_dir()])
     # Schnellmodus
     cq = cfg("s3-schnell", vergleich__voller_hash=False)
     rq = run(cq, "abgleich", SyncParams([str(Q)], str(Z), True, "struktur", "", "", True))
+    ok("Schnellmodus wird in der Zusammenfassung gewarnt", rq.summary.get("Vergleich", "").startswith("⚠️"), rq.summary)
     if status_of(rq, Q / "gross_bearbeitet.jpg") == "Bereits im Ziel":
         befund("Schnellmodus (voller_hash=false) hält Dateien mit gleicher Größe/Anfang/Ende für gleich",
                "gross_bearbeitet.jpg (1 Byte in der Mitte anders) → 'Bereits im Ziel' → würde NICHT gesichert. "
@@ -438,18 +437,17 @@ def t_sync_edge():
     # Überlappende Quellen
     img(W / "Q" / "a.jpg", 123); img(W / "Q" / "sub" / "b.jpg", 124)
     r = run(c, "abgleich", SyncParams([str(W / "Q"), str(W / "Q" / "sub")], str(W / "Z3"), True, "struktur", "", "", True))
-    n_src = r.summary["Dateien in Quellen"]
-    if n_src != 2:
-        befund("Überlappende Quellen (Ordner + Unterordner) zählen Dateien doppelt",
-               f"Dateien in Quellen = {n_src} statt 2; b.jpg erscheint als 'Doppelt in Quelle' gegen sich selbst")
+    ok("Überlappende Quellen: jede Datei nur einmal gezählt", r.summary["Dateien in Quellen"] == 2, r.summary)
     ok("Überlappende Quellen: b.jpg trotzdem nur 1× kopiert", r.summary["Fehlen im Ziel"] == 2, r.summary)
     # Quelle liegt im Ziel
     img(W / "Z4" / "Archiv" / "x.jpg", 125); cp(W / "Z4" / "Archiv" / "x.jpg", W / "Z4" / "Neu" / "x-kopie.jpg")
     img(W / "Z4" / "Neu" / "nur_neu.jpg", 126)
-    r = run(c, "abgleich", SyncParams([str(W / "Z4" / "Neu")], str(W / "Z4"), True, "struktur", "", "", True))
-    if r.summary["Dateien in Quellen"] == 0:
-        befund("Quelle innerhalb des Ziels wird komplett ignoriert",
-               "Abgleich Z4/Neu → Z4 meldet 0 Dateien in Quelle, statt zu prüfen ob Neu/ im restlichen Ziel liegt")
+    z40 = snapshot(W / "Z4")
+    r = run(c, "abgleich", SyncParams([str(W / "Z4" / "Neu")], str(W / "Z4"), True, "struktur", "", "", False))
+    ok("Quelle im Ziel: Kopie erkannt, Einzelstück gemeldet, nichts kopiert",
+       status_of(r, W / "Z4" / "Neu" / "x-kopie.jpg") == "Bereits im Ziel"
+       and status_of(r, W / "Z4" / "Neu" / "nur_neu.jpg").startswith("Nur im Quellordner")
+       and snapshot(W / "Z4") == z40, r.rows)
     # Ziel liegt in der Quelle
     img(W / "Q5" / "a.jpg", 127)
     r = run(c, "abgleich", SyncParams([str(W / "Q5")], str(W / "Q5" / "Backup"), True, "struktur", "", "", False))
@@ -598,6 +596,7 @@ def t_dups():
     # Methoden ohne Hash
     cn = cfg("s6-name", vergleich__methode="name_groesse")
     rn = run(cn, "duplikate", DupParams(str(D), "aeltestes", "bericht"))
+    ok("Unsichere Methode wird in der Zusammenfassung gewarnt", rn.summary.get("Vergleich", "").startswith("⚠️"), rn.summary)
     if any("n1/same.jpg" in x["Datei"] for x in rn.rows):
         befund("Methode 'name_groesse' meldet verschiedene Bilder mit gleichem Namen+Größe als Duplikat",
                "n1/same.jpg ≙ n2/same.jpg (Inhalt verschieden) – mit 'verschieben/papierkorb' gefährlich")
@@ -713,9 +712,8 @@ def t_sort():
     img(S4 / "a.jpg", 320, {"DateTimeOriginal": "2025:08:09 14:05:59"})
     cp(S4 / "a.jpg", W / "T5" / "2025" / "a.jpg")
     r = run(c, "sortieren", SortParams(str(S4), str(W / "T5"), "{Jahr}", "", "move", False, True))
-    if (S4 / "a.jpg").exists():
-        befund("Verschieben: liegt schon eine identische Datei am Ziel, bleibt die Quelldatei liegen",
-               "Status 'Identisch vorhanden – übersprungen' – Quelle wird nicht aufgeräumt (sicher, aber evtl. unerwartet)")
+    ok("Verschieben mit identischer Datei am Ziel: Quelle bleibt, Bericht erklärt es",
+       (S4 / "a.jpg").exists() and "Duplikat" in rows_by(r)[nfc(S4 / "a.jpg")]["Info"], r.rows)
     # Ziel innerhalb der Quelle (copy)
     r = run(c, "sortieren", SortParams(str(S), str(S / "Sortiert"), "{Jahr}", "", "copy", False))
     r2 = run(c, "sortieren", SortParams(str(S), str(S / "Sortiert"), "{Jahr}", "", "copy", True))
@@ -796,20 +794,18 @@ def t_cancel():
             if state["n"] == 4:
                 ctx.cancel()
     ctx._on_progress = prog
-    try:
-        run(c, "abgleich", SyncParams([str(Q)], str(W / "Z"), True, "struktur", "", "", False), ctx)
-        ok("Abbrechen löst Abbruch aus", False, "lief durch")
-    except Cancelled:
-        ok("Abbrechen löst Abbruch aus", True)
+    rc = run(c, "abgleich", SyncParams([str(Q)], str(W / "Z"), True, "struktur", "", "", False), ctx)
+    ok("Abbrechen beendet den Lauf", rc.cancelled, rc.summary)
+    ok("Abbruch: Teilbericht geschrieben", rc.reports and all(r.exists() for r in rc.reports)
+       and "⚠️ Abgebrochen" in rc.summary, rc.reports)
     copied = list((W / "Z").rglob("*.jpg"))
     ok("Nach Abbruch: keine halben Dateien (.fototool-tmp)", not list((W / "Z").rglob("*.fototool-tmp")))
     ok("Nach Abbruch: kopierte Dateien vollständig", all(h(p) == h(Q / p.name) for p in copied))
     js = list_journals(c.data_dir)
-    ok("Nach Abbruch: Journal vorhanden", js and len(read_entries(js[0])) == len(copied), (js, len(copied)))
+    n_files = sum(e["aktion"] == "kopiert" for e in read_entries(js[0])) if js else 0
+    ok("Nach Abbruch: Journal vorhanden", n_files == len(copied), (js, len(copied)))
     r = run(c, "abgleich", SyncParams([str(Q)], str(W / "Z"), True, "struktur", "", "", False))
     ok("Fortsetzen nach Abbruch: Rest wird kopiert", len(list((W / "Z").rglob("*.jpg"))) == 12, r.summary)
-    befund("Abgebrochener Lauf schreibt keinen Bericht (nur Journal)",
-           "Nach Abbruch steht im Log 'Abgebrochen', Rückgängig über Verlauf möglich")
 
 
 # --- 10. Einstellungen, Profile, Cache, Kommandozeile ------------------------------------
@@ -845,9 +841,7 @@ def t_misc():
     r = run(cc, "duplikate", DupParams(str(D), "aeltestes", "bericht"))
     blob(a, random.Random(2).randbytes(10_000), TS("2025-01-01 10:00"))
     r = run(cc, "duplikate", DupParams(str(D), "aeltestes", "bericht"))
-    if r.summary["Duplikat-Gruppen"] == 1:
-        befund("Prüfsummen-Cache erkennt geänderten Inhalt nicht, wenn Größe UND Änderungszeit gleich bleiben",
-               "sehr selten (Werkzeuge, die Zeitstempel zurücksetzen) – dann falsches 'Duplikat'")
+    ok("Cache erkennt neuen Inhalt trotz gleicher Größe + Änderungszeit", r.summary["Duplikat-Gruppen"] == 0, r.summary)
     # Kommandozeile
     Q, Z = W / "cli" / "Q", W / "cli" / "Z"
     img(Q / "a.jpg", 600); img(Q / "b.jpg", 601); cp(Q / "a.jpg", Q / "a-kopie.jpg")

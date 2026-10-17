@@ -422,5 +422,92 @@ class RegressionTests(Base):
         self.assertTrue((dst / "src" / "a.jpg").exists())
         self.assertFalse((dst / "src" / "b.jpg").exists())
 
+class KleineBefundeTests(Base):
+    """Kleinere Befunde der Praxis-Prüfung (17.10.2026)."""
+
+    def test_overlapping_sources_count_once(self):
+        src = self.tmp / "Q"
+        write(src / "a.jpg", b"a" * 100)
+        write(src / "sub" / "b.jpg", b"b" * 100)
+        res = run_job(self.cfg, self.ctx, "abgleich",
+                      SyncParams([str(src), str(src / "sub")], str(self.tmp / "Z"), probelauf=True))
+        self.assertEqual(res.summary["Dateien in Quellen"], 2)
+        self.assertNotIn("Doppelt in Quelle (nur 1× kopiert)", res.summary)
+
+    def test_source_inside_target(self):
+        z = self.tmp / "Z"
+        write(z / "Archiv" / "x.jpg", b"x" * 100)
+        write(z / "Neu" / "x-kopie.jpg", b"x" * 100)
+        write(z / "Neu" / "nur_neu.jpg", b"n" * 100)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(z / "Neu")], str(z), probelauf=False))
+        status = {Path(r["Datei"]).name: r["Status"] for r in res.rows}
+        self.assertEqual(status["x-kopie.jpg"], "Bereits im Ziel")
+        self.assertEqual(status["nur_neu.jpg"], "Nur im Quellordner (liegt im Ziel, sonst nirgends)")
+        self.assertEqual(res.summary["Fehlen im Ziel"], 0)
+        self.assertEqual(sorted(p.name for p in z.rglob("*.jpg")), ["nur_neu.jpg", "x-kopie.jpg", "x.jpg"])
+
+    def test_undo_removes_created_folders_only(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "a" / "b" / "x.jpg", b"x" * 100)
+        (dst / "leer_vorher").mkdir(parents=True)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        write(dst / "src" / "a" / ".DS_Store", b"finder")  # Finder war im Ordner
+        undo(res.journal, self.ctx)
+        self.assertFalse((dst / "src").exists())
+        self.assertTrue((dst / "leer_vorher").is_dir())
+        self.assertTrue((dst / "_FotoTool-Berichte").is_dir())  # Berichte bleiben
+
+    def test_undo_keeps_folder_with_new_files(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "x.jpg", b"x" * 100)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        write(dst / "src" / "eigene.jpg", b"e" * 100)  # später selbst dazugelegt
+        undo(res.journal, self.ctx)
+        self.assertTrue((dst / "src" / "eigene.jpg").exists())
+        self.assertFalse((dst / "src" / "x.jpg").exists())
+
+    def test_cancel_writes_partial_report(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        for i in range(5):
+            write(src / f"f{i}.jpg", bytes([i]) * 100)
+        ctx = RunContext(on_progress=lambda ph, d, t: ctx.cancel() if ph == "Kopieren" and d == 2 else None)
+        res = run_job(self.cfg, ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertTrue(res.cancelled)
+        self.assertIn("⚠️ Abgebrochen", res.summary)
+        self.assertTrue(res.reports and all(r.exists() for r in res.reports))
+        self.assertEqual(len(list(dst.rglob("*.jpg"))), 2)
+        undo(res.journal, self.ctx)
+        self.assertFalse(dst.joinpath("src").exists())
+
+    def test_cache_detects_rewrite_with_same_size_and_mtime(self):
+        root = self.tmp / "fotos"
+        a = write(root / "a.jpg", b"1" * 100, mtime=1_000_000)
+        write(root / "b.jpg", b"1" * 100, mtime=1_000_000)
+        self.assertEqual(run_job(self.cfg, self.ctx, "duplikate", DupParams(str(root))).summary["Duplikat-Gruppen"], 1)
+        write(a, b"2" * 100, mtime=1_000_000)  # Inhalt neu, Größe + Zeitstempel wie vorher
+        self.assertEqual(run_job(self.cfg, self.ctx, "duplikate", DupParams(str(root))).summary["Duplikat-Gruppen"], 0)
+
+    def test_kw_year_placeholder(self):
+        e = FileEntry(Path("/q/x.jpg"), 0, 0, Path("/q"))
+        m = Meta(datetime(2025, 12, 31, 12, 0))
+        self.assertEqual(PatternRenderer(self.cfg).folder("{KWJahr}/{KW}", e, m), Path("2026/KW01"))
+
+    def test_unsafe_method_noted_in_summary(self):
+        root = self.tmp / "fotos"
+        write(root / "a.jpg", b"1" * 100)
+        self.cfg.set("vergleich.methode", "name_groesse")
+        res = run_job(self.cfg, self.ctx, "duplikate", DupParams(str(root)))
+        self.assertTrue(res.summary["Vergleich"].startswith("⚠️"))
+
+    def test_move_with_identical_target_explains(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        t = datetime(2023, 1, 2).timestamp()
+        write(src / "a.jpg", b"a" * 100, mtime=t)
+        write(dst / "2023" / "a.jpg", b"a" * 100)
+        self.cfg.set("metadaten.datum_felder", ["datei_mtime"])
+        res = run_job(self.cfg, self.ctx, "sortieren", SortParams(str(src), str(dst), "{Jahr}", "", "move", False, True))
+        self.assertIn("Duplikat", res.rows[0]["Info"])
+        self.assertTrue((src / "a.jpg").exists())
+
 if __name__ == "__main__":
     unittest.main()

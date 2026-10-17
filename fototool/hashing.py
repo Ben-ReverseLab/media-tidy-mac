@@ -20,21 +20,26 @@ class HashCache:
         self.db.execute("""CREATE TABLE IF NOT EXISTS hashes (
             path TEXT, size INTEGER, mtime REAL, algo TEXT, kind TEXT, digest TEXT,
             PRIMARY KEY (path, algo, kind))""")
+        if "ctime" not in {r[1] for r in self.db.execute("PRAGMA table_info(hashes)")}:
+            self.db.execute("ALTER TABLE hashes ADD COLUMN ctime REAL")  # ältere Caches
         self.db.commit()
 
     def get(self, e: FileEntry, algo: str, kind: str) -> str | None:
         with self.lock:
             row = self.db.execute(
-                "SELECT size, mtime, digest FROM hashes WHERE path=? AND algo=? AND kind=?",
+                "SELECT size, mtime, digest, ctime FROM hashes WHERE path=? AND algo=? AND kind=?",
                 (str(e.path), algo, kind)).fetchone()
-        if row and row[0] == e.size and abs(row[1] - e.mtime) < 1e-3:
-            return row[2]
-        return None
+        if not row or row[0] != e.size or abs(row[1] - e.mtime) >= 1e-3:
+            return None
+        # Änderungszeit lässt sich zurücksetzen, ctime nicht: anderer ctime -> neu prüfen
+        if e.ctime and (row[3] is None or abs(row[3] - e.ctime) >= 1e-3):
+            return None
+        return row[2]
 
     def put(self, e: FileEntry, algo: str, kind: str, digest: str) -> None:
         with self.lock:
-            self.db.execute("INSERT OR REPLACE INTO hashes VALUES (?,?,?,?,?,?)",
-                            (str(e.path), e.size, e.mtime, algo, kind, digest))
+            self.db.execute("INSERT OR REPLACE INTO hashes (path, size, mtime, algo, kind, digest, ctime) "
+                            "VALUES (?,?,?,?,?,?,?)", (str(e.path), e.size, e.mtime, algo, kind, digest, e.ctime))
 
     def commit(self) -> None:
         with self.lock:

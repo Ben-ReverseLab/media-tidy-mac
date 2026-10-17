@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .actions import FileOps, Result
 from .config import Config
-from .context import RunContext
+from .context import Cancelled, RunContext
 from .hashing import HashCache, Hasher, group_by_key
 from .journal import Journal
 from .metadata import Meta, MetadataReader
@@ -38,6 +38,7 @@ STATUS_TEXT = {
     "sidecar_fehlt": "Sidecar fehlt im Ziel",
     "sidecar_geaendert": "Sidecar geändert",
     "sidecar_ziel_neuer": "Sidecar im Ziel neuer – nicht ersetzt",
+    "nur_in_quelle": "Nur im Quellordner (liegt im Ziel, sonst nirgends)",
 }
 # Im Probelauf: was passieren würde
 DRY_TEXT = {
@@ -165,6 +166,27 @@ class Job:
         self.scanner = Scanner(cfg)
         self.method = cfg.get("vergleich.methode", "hash")
         self.last_scan_errors: list[str] = []
+        # Zwischenstand – damit ein abgebrochener Lauf trotzdem einen (Teil-)Bericht bekommt
+        self.res: JobResult | None = None
+        self.ops: FileOps | None = None
+        self.journal: Journal | None = None
+        self.report_target: Path | None = None
+
+    def comparison(self) -> tuple[str, bool]:
+        """(Beschreibung der Vergleichsmethode, sicher?)"""
+        if self.method == "name_groesse":
+            return "nur Name + Größe – verschiedene Bilder können als gleich gelten", False
+        if self.method == "name_groesse_datum":
+            return "Name + Größe + Aufnahmedatum – verschiedene Bilder können als gleich gelten", False
+        if not self.hasher.full:
+            return "Schnellmodus: Größe + Anfang/Ende – minimal unsicher", False
+        return "Inhalt (Prüfsumme)", True
+
+    def note_comparison(self, res: JobResult) -> None:
+        text, safe = self.comparison()
+        res.summary["Vergleich"] = text if safe else "⚠️ " + text
+        if not safe:
+            self.ctx.message(f"⚠️ Vergleich: {text}", logging.WARNING)
 
     def scan(self, root: Path, res: JobResult) -> list[FileEntry]:
         ensure_access(root)
@@ -221,6 +243,8 @@ class Job:
             if journal.file.exists():
                 res.journal = journal.file
         self.cache.close()
+        if res.cancelled:
+            res.summary["⚠️ Abgebrochen"] = "Lauf vorzeitig beendet – Bericht unvollständig"
         counts = Counter(r["Status"] for r in res.rows)
         res.summary.update({k: v for k, v in counts.most_common()})
         if res.errors:
@@ -230,6 +254,12 @@ class Job:
         res.reports = write_report(self.cfg, report_dir(self.cfg, target, dry_run), self.name,
                                    res.title, res.summary, columns, res.rows, dry_run)
         return res
+
+    def finish_cancelled(self, dry_run: bool) -> JobResult:
+        res = self.res or JobResult(self.name)
+        res.cancelled = True
+        return self.finish(res, self.ops, self.journal, self.report_target if self.ops else None,
+                           dry_run, self.columns)
 
     def _row(self, r: Result, dry_run: bool, **extra) -> dict:
         text = STATUS_TEXT.get(r.status, r.status)
@@ -245,7 +275,7 @@ class SyncJob(Job):
     columns = ["Status", "Datei", "Größe", "Ziel", "Info"]
 
     def run(self, p: SyncParams) -> JobResult:
-        res = JobResult("Abgleich Quelle → Ziel")
+        res = self.res = JobResult("Abgleich Quelle → Ziel")
         target = Path(p.ziel).expanduser()
         sources = [Path(s).expanduser() for s in p.quellen]
         if p.ablage == "muster":
@@ -253,15 +283,26 @@ class SyncJob(Job):
             if p.dateiname:
                 validate(p.dateiname)
         ensure_access(target, must_exist=False)  # zuerst prüfen, bevor lange gescannt wird
+        self.note_comparison(res)
+        # Quelle im Ziel (z.B. Ziel/Neu): prüfen, ob die Dateien sonst irgendwo im Ziel liegen
+        inner = [s for s in sources if s.is_relative_to(target)]
         src_entries: list[FileEntry] = []
+        seen: set[Path] = set()
         for s in sources:
             entries = self.scan(s, res)
-            src_entries += [e for e in entries if not e.path.is_relative_to(target)]
+            if s not in inner:  # Ziel liegt in der Quelle: Ziel nicht als Quelle zählen
+                entries = [e for e in entries if not e.path.is_relative_to(target)]
+            for e in entries:  # überlappende Quellen (Ordner + Unterordner): jede Datei nur einmal
+                if e.path not in seen:
+                    seen.add(e.path)
+                    src_entries.append(e)
         tgt_entries: list[FileEntry] = []
         target_incomplete = 0
         if target.exists():
             tgt_entries = self.scan(target, res)
             target_incomplete = len(self.last_scan_errors)
+            if inner:
+                tgt_entries = [e for e in tgt_entries if not any(e.path.is_relative_to(s) for s in inner)]
         else:
             self.ctx.message(f"Ziel existiert noch nicht und wird angelegt: {target}")
         if target_incomplete:
@@ -299,13 +340,17 @@ class SyncJob(Job):
                 for e in in_src:
                     res.rows.append({"Status": STATUS_TEXT["vorhanden"], "Datei": str(e.path),
                                      "Größe": human_size(e.size), "Ziel": str(in_tgt[0].path)})
+            elif any(in_src[0].path.is_relative_to(s) for s in inner):
+                for e in in_src:  # liegt physisch schon im Ziel – nicht noch einmal kopieren
+                    res.rows.append({"Status": STATUS_TEXT["nur_in_quelle"], "Datei": str(e.path),
+                                     "Größe": human_size(e.size)})
             else:
                 missing.append(in_src[0])
                 for e in in_src[1:]:
                     res.rows.append({"Status": STATUS_TEXT["doppelt_in_quelle"], "Datei": str(e.path),
                                      "Größe": human_size(e.size), "Info": f"gleich wie {in_src[0].path}"})
         sidecar_todo = self._compare_sidecars(sidecar_src, res)
-        res.summary = {"Quellen": ", ".join(map(str, sources)), "Ziel": str(target),
+        res.summary = {**res.summary, "Quellen": ", ".join(map(str, sources)), "Ziel": str(target),
                        "Dateien in Quellen": n_src_all, "Dateien im Ziel": len(tgt_entries),
                        "Fehlen im Ziel": len(missing),
                        "Größe fehlend": human_size(sum(e.size for e in missing))}
@@ -318,8 +363,9 @@ class SyncJob(Job):
 
         ops = journal = None
         if p.fehlende_kopieren and (missing or sidecar_todo):
-            journal = None if p.probelauf else Journal(self.cfg.data_dir, self.name)
-            ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
+            journal = self.journal = None if p.probelauf else Journal(self.cfg.data_dir, self.name)
+            ops = self.ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
+            self.report_target = target
             meta = {}
             renderer = PatternRenderer(self.cfg)
             if p.ablage == "muster":
@@ -403,8 +449,9 @@ class DupJob(Job):
     columns = ["Gruppe", "Status", "Datei", "Größe", "Ziel", "Info"]
 
     def run(self, p: DupParams) -> JobResult:
-        res = JobResult("Duplikate im Ordner")
+        res = self.res = JobResult("Duplikate im Ordner")
         root = Path(p.ordner).expanduser()
+        self.note_comparison(res)
         dup_root = root / p.duplikat_ordner
         entries = self.scan(root, res)
         n_all = len(entries)
@@ -415,8 +462,9 @@ class DupJob(Job):
         groups = sorted((g for g in self.group(entries, res) if len(g) > 1),
                         key=lambda g: str(min(e.path for e in g)))
         rule = KEEP_RULES.get(p.behalten, KEEP_RULES["aeltestes"])
-        journal = None if (p.probelauf or p.aktion == "bericht") else Journal(self.cfg.data_dir, self.name)
-        ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
+        journal = self.journal = None if (p.probelauf or p.aktion == "bericht") else Journal(self.cfg.data_dir, self.name)
+        ops = self.ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
+        self.report_target = root if p.aktion != "bericht" else None
         wasted = 0
         for n, g in enumerate(groups, 1):
             self.ctx.check()
@@ -435,7 +483,7 @@ class DupJob(Job):
                     r = Result("duplikat", e.path, None)
                 res.rows.append({"Gruppe": n, **self._row(r, p.probelauf, **{"Größe": human_size(e.size)})})
             self.ctx.progress("Duplikate behandeln", n, len(groups))
-        res.summary = {"Ordner": str(root), "Dateien": n_all, "Duplikat-Gruppen": len(groups),
+        res.summary = {**res.summary, "Ordner": str(root), "Dateien": n_all, "Duplikat-Gruppen": len(groups),
                        "Überzählige Dateien": sum(len(g) - 1 for g in groups),
                        "Platz durch Duplikate": human_size(wasted), "Aktion": p.aktion,
                        "Behalten-Regel": p.behalten}
@@ -453,7 +501,7 @@ class SortJob(Job):
     columns = ["Status", "Datei", "Ziel", "Datum", "Datumsquelle", "Kamera", "Info"]
 
     def run(self, p: SortParams) -> JobResult:
-        res = JobResult("Sortieren nach Metadaten")
+        res = self.res = JobResult("Sortieren nach Metadaten")
         validate(p.muster)
         if p.dateiname:
             validate(p.dateiname)
@@ -464,8 +512,9 @@ class SortJob(Job):
             entries = [e for e in entries if not e.path.is_relative_to(target)]
         meta = MetadataReader(self.cfg).read(entries, self.ctx)
         renderer = PatternRenderer(self.cfg)
-        journal = None if p.probelauf else Journal(self.cfg.data_dir, self.name)
-        ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
+        journal = self.journal = None if p.probelauf else Journal(self.cfg.data_dir, self.name)
+        ops = self.ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
+        self.report_target = target
         mode = "move" if p.modus == "move" else "copy"
         for i, e in enumerate(sorted(entries, key=lambda e: str(e.path)), 1):
             self.ctx.check()
@@ -497,5 +546,8 @@ def run_job(cfg: Config, ctx: RunContext, job: str, params) -> JobResult:
     j = JOBS[job](cfg, ctx)
     try:
         return j.run(params)
+    except Cancelled:
+        ctx.message("Abgebrochen – Teilbericht wird geschrieben.")
+        return j.finish_cancelled(params.probelauf)
     finally:
         j.cache.close()

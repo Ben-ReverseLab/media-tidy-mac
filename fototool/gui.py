@@ -613,7 +613,7 @@ class App:
         self.hist_files = list_journals(self.cfg.data_dir)
         self.hist.delete(0, "end")
         for p in self.hist_files:
-            n = sum(1 for e in read_entries(p) if e.get("aktion") != "lauf_rueckgaengig")
+            n = sum(1 for e in read_entries(p) if e.get("aktion") not in ("lauf_rueckgaengig", "ordner_angelegt"))
             self.hist.insert("end", f"  {p.stem}   ({n} Aktionen)")
         if not self.hist_files:
             self.hist.insert("end", "  Noch keine echten Läufe – Probeläufe erscheinen hier nicht.")
@@ -841,6 +841,9 @@ class App:
             msgs.append("Duplikate werden in den Papierkorb gelegt.")
         if job == "sortieren":
             msgs.append(f"Dateien werden nach\n{p.ziel}\n{'VERSCHOBEN' if p.modus == 'move' else 'kopiert'}.")
+        if job == "duplikate" and p.aktion != "bericht" and self.cfg.get("vergleich.methode", "hash") != "hash":
+            warnings.append("ACHTUNG: Vergleich nur nach Name/Größe – verschiedene Bilder können als "
+                            "Duplikat gelten. Sicher ist nur die Methode „hash“.")
         if overwrite and job != "duplikate":
             warnings.append("ACHTUNG: Kollisionsstrategie „überschreiben“ ist aktiv.")
         moving_from = p.quelle if job == "sortieren" and p.modus == "move" else (
@@ -949,6 +952,8 @@ class App:
         if res is None:
             return
         self.last_result = res
+        if res.cancelled:
+            self.log("Abgebrochen – Teilbericht:")
         self.log("\n".join(f"  {k}: {v}" for k, v in res.summary.items()))
         for r in res.reports:
             self.log(f"  Bericht: {r}")

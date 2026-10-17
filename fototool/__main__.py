@@ -135,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {k}: {v}")
     for r in res.reports:
         print(f"  Bericht: {r}")
+    if res.cancelled:
+        print("\nAbgebrochen – Bericht unvollständig.")
+        return 130
     if dry:
         print("\nProbelauf – nichts verändert. Mit --ausfuehren wirklich ausführen.")
     return 0

@@ -19,6 +19,7 @@ class FileEntry:
     sidecars: list[Path] = field(default_factory=list)
     rel_override: Path | None = None  # Pfad im Ziel für Dateien aus Bibliotheken
     source_label: str = ""  # Name der Quelle im Ziel (vom Scanner gesetzt)
+    ctime: float = 0.0  # Statusänderung – ändert sich bei jedem Schreiben, lässt sich nicht zurücksetzen
 
     @property
     def rel(self) -> Path:
@@ -121,7 +122,8 @@ class Scanner:
                 rel = p.relative_to(inner)
                 if replacement != root.with_suffix(""):  # Bibliothek liegt innerhalb der Quelle
                     rel = replacement.relative_to(root) / rel
-            media.append(FileEntry(p, st.st_size, st.st_mtime, root, rel_override=rel, source_label=label))
+            media.append(FileEntry(p, st.st_size, st.st_mtime, root, rel_override=rel, source_label=label,
+                                   ctime=st.st_ctime))
             if n % 500 == 0:
                 ctx.progress(f"Durchsuche {root.name}", len(media), 0)
         self._assign_sidecars(media, sidecars)

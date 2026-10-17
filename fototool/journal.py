@@ -88,6 +88,11 @@ def undo(file: Path, ctx: RunContext, dry_run: bool = False) -> tuple[int, list[
                     done += 1
                 else:
                     problems.append(f"Alte Version fehlt, nicht wiederherstellbar: {dst}")
+            elif act == "ordner_angelegt":
+                # nur entfernen, wenn leer (eine Finder-.DS_Store zählt nicht)
+                if src.is_dir() and {p.name for p in src.iterdir()} <= {".DS_Store"} and not dry_run:
+                    (src / ".DS_Store").unlink(missing_ok=True)
+                    src.rmdir()
             elif act == "papierkorb":
                 problems.append(f"Aus Papierkorb manuell wiederherstellen: {src.name}")
             elif act == "ueberschrieben":

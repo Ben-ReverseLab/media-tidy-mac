@@ -71,8 +71,20 @@ class FileOps:
                 return cand
             n += 1
 
+    def _mkdirs(self, d: Path) -> None:
+        """Ordner anlegen und neu angelegte im Journal vermerken (Rückgängig entfernt sie wieder)."""
+        new = []
+        p = d
+        while not p.exists() and p != p.parent:
+            new.append(p)
+            p = p.parent
+        d.mkdir(parents=True, exist_ok=True)
+        if self.journal:
+            for p in reversed(new):
+                self.journal.record("ordner_angelegt", p, None)
+
     def _copy_file(self, src: Path, dst: Path) -> None:
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        self._mkdirs(dst.parent)
         tmp = dst.with_name(dst.name + TMP_SUFFIX)
         try:
             if self.keep_times:
@@ -89,7 +101,7 @@ class FileOps:
     def _move_file(self, src: Path, dst: Path) -> None:
         if self.is_protected(src):
             raise ProtectedError(f"Geschützt, wird nicht verschoben: {src}")
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        self._mkdirs(dst.parent)
         if os.stat(src).st_dev == os.stat(dst.parent).st_dev:
             if dst.exists():
                 raise FileExistsError(str(dst))
@@ -114,7 +126,8 @@ class FileOps:
             status_overwrite = False
             if self._exists(dst):
                 if self._same_content(src, dst):
-                    return Result("identisch_vorhanden", src, dst)
+                    info = "Quelle bleibt liegen (ist ein Duplikat) – aufräumen über „Duplikate“" if mode == "move" else ""
+                    return Result("identisch_vorhanden", src, dst, info)
                 if self.collision == "ueberspringen":
                     return Result("kollision_uebersprungen", src, dst, "anderer Inhalt mit gleichem Namen")
                 if self.collision == "ueberschreiben" and overwrite_ok:
