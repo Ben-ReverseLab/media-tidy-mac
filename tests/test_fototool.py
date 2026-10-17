@@ -143,12 +143,16 @@ class JobTests(Base):
         self.assertEqual(copied[0].read_bytes(), b"BBBB" * 1000)
         self.assertTrue(res.journal and res.journal.exists())
         self.assertTrue(res.reports)
+        # A.CR3 liegt schon im Ziel (umbenannt) – seine XMP wird daneben ergänzt
+        self.assertEqual((dst / "irgendwo" / "umbenannt.xmp").read_bytes(), b"<xmp/>")
 
         again = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
         self.assertEqual(again.summary["Fehlen im Ziel"], 0)
+        self.assertNotIn("Sidecars fehlend/geändert", again.summary)
 
         done, problems = undo(res.journal, self.ctx)
-        self.assertEqual(done, 1)
+        self.assertEqual(done, 2)
+        self.assertFalse((dst / "irgendwo" / "umbenannt.xmp").exists())
         self.assertFalse(copied[0].exists())
 
     def test_sync_pattern_with_sidecar(self):
@@ -273,6 +277,150 @@ class AccessTests(Base):
             run_job(self.cfg, self.ctx, "abgleich",
                     SyncParams([str(self.src)], "/Volumes/GibtsNicht123/Fotos", probelauf=True))
 
+
+class RegressionTests(Base):
+    """Fehler aus der Praxis-Prüfung vom 17.10.2026 (tests/praxis_pruefung.py)."""
+
+    def test_source_folder_with_dot_keeps_full_name(self):
+        src = self.tmp / "Urlaub 2025.08"
+        write(src / "p.jpg", b"p" * 100)
+        run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(self.tmp / "dst"), probelauf=False))
+        self.assertTrue((self.tmp / "dst" / "Urlaub 2025.08" / "p.jpg").exists())
+
+    def test_shared_xmp_belongs_to_raw(self):
+        root = self.tmp / "shoot"
+        write(root / "IMG_7.JPG", b"j" * 100)
+        write(root / "IMG_7.CR3", b"r" * 100)
+        write(root / "IMG_7.xmp", b"<xmp/>")
+        write(root / "k.jpg", b"k" * 100)
+        write(root / "k.jpg.XMP", b"<xmp/>")  # andere Schreibweise der Endung
+        entries = {e.path.name: [s.name for s in e.sidecars] for e in Scanner(self.cfg).scan(root, self.ctx)[0]}
+        self.assertEqual(entries, {"IMG_7.CR3": ["IMG_7.xmp"], "IMG_7.JPG": [], "k.jpg": ["k.jpg.XMP"]})
+
+    def test_dup_jpg_does_not_take_raw_xmp(self):
+        root = self.tmp / "fotos"
+        write(root / "Shoot" / "IMG_7.JPG", b"j" * 100, mtime=2_000_000)
+        write(root / "Shoot" / "IMG_7.CR3", b"r" * 100)
+        write(root / "Shoot" / "IMG_7.xmp", b"<xmp/>")
+        write(root / "Export" / "IMG_7.JPG", b"j" * 100, mtime=1_000_000)
+        run_job(self.cfg, self.ctx, "duplikate",
+                DupParams(str(root), "aeltestes", "verschieben", probelauf=False, bestaetigt=True))
+        self.assertTrue((root / "_Duplikate" / "Shoot" / "IMG_7.JPG").exists())
+        self.assertTrue((root / "Shoot" / "IMG_7.xmp").exists())
+
+    def test_sort_nef_jpg_xmp_goes_with_raw(self):
+        src = self.tmp / "src"
+        write(src / "DSC_1.JPG", b"j" * 100)
+        write(src / "DSC_1.NEF", b"n" * 100)
+        write(src / "DSC_1.xmp", b"<xmp/>")
+        run_job(self.cfg, self.ctx, "sortieren",
+                SortParams(str(src), str(self.tmp / "out"), "{Typ}", "", "move", probelauf=False, bestaetigt=True))
+        self.assertTrue((self.tmp / "out" / "RAW" / "DSC_1.xmp").exists())
+        self.assertFalse((self.tmp / "out" / "Foto" / "DSC_1.xmp").exists())
+
+    def test_custom_dup_folder_is_not_rescanned(self):
+        root = self.tmp / "fotos"
+        write(root / "a.jpg", b"x" * 100, mtime=1_000_000)
+        write(root / "b.jpg", b"x" * 100, mtime=2_000_000)
+        p = DupParams(str(root), "aeltestes", "verschieben", "Aussortiert", probelauf=False, bestaetigt=True)
+        run_job(self.cfg, self.ctx, "duplikate", p)
+        again = run_job(self.cfg, self.ctx, "duplikate", DupParams(str(root), "aeltestes", "verschieben", "Aussortiert"))
+        self.assertEqual(again.summary["Duplikat-Gruppen"], 0)
+
+    def test_empty_files_reported_as_defect(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "leer.jpg", b"")
+        write(src / "x" / "leer2.jpg", b"")
+        write(dst / "kaputt.jpg", b"")
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        status = {Path(r["Datei"]).name: r["Status"] for r in res.rows}
+        self.assertEqual(status["leer.jpg"], "Leere Datei (0 Byte) – vermutlich defekt")
+        self.assertFalse((dst / "src").exists())
+        dup = run_job(self.cfg, self.ctx, "duplikate", DupParams(str(src)))
+        self.assertEqual(dup.summary["Duplikat-Gruppen"], 0)
+        self.assertEqual(dup.summary["Leere Dateien (defekt)"], 2)
+
+    def _sidecar_world(self, src_xmp_mtime: float):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "A.CR3", b"A" * 1000)
+        write(src / "A.xmp", b"<xmp>neu</xmp>", mtime=src_xmp_mtime)
+        write(dst / "Backup" / "A.CR3", b"A" * 1000)
+        write(dst / "Backup" / "A.xmp", b"<xmp>alt</xmp>", mtime=1_500_000_000)
+        return src, dst
+
+    def test_changed_sidecar_replaced_when_source_newer_and_undo(self):
+        src, dst = self._sidecar_world(1_600_000_000)
+        dry = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=True))
+        self.assertEqual(dry.summary["Sidecars fehlend/geändert"], 1)
+        self.assertEqual((dst / "Backup" / "A.xmp").read_bytes(), b"<xmp>alt</xmp>")
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertEqual((dst / "Backup" / "A.xmp").read_bytes(), b"<xmp>neu</xmp>")
+        self.assertIn("Sidecar aktualisiert", {r["Status"] for r in res.rows})
+        done, problems = undo(res.journal, self.ctx)
+        self.assertEqual(problems, [])
+        self.assertEqual((dst / "Backup" / "A.xmp").read_bytes(), b"<xmp>alt</xmp>")
+
+    def test_sidecar_newer_in_target_is_kept(self):
+        src, dst = self._sidecar_world(1_400_000_000)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertEqual((dst / "Backup" / "A.xmp").read_bytes(), b"<xmp>alt</xmp>")
+        self.assertIn("Sidecar im Ziel neuer – nicht ersetzt", {r["Status"] for r in res.rows})
+
+    def test_sidecar_report_only_setting(self):
+        src, dst = self._sidecar_world(1_600_000_000)
+        self.cfg.set("abgleich.sidecar_geaendert", "nur_bericht")
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertEqual((dst / "Backup" / "A.xmp").read_bytes(), b"<xmp>alt</xmp>")
+        self.assertIn("Sidecar geändert", {r["Status"] for r in res.rows})
+
+    def test_trash_failure_is_reported_not_hidden(self):
+        from unittest import mock
+        import subprocess
+        root = self.tmp / "fotos"
+        write(root / "a.jpg", b"x" * 100, mtime=1_000_000)
+        write(root / "b.jpg", b"x" * 100, mtime=2_000_000)
+
+        def finder_refuses(cmd, **kw):
+            self.assertIn("set f to POSIX file (p as text)", cmd)  # Form, die der Finder versteht
+            return subprocess.CompletedProcess(cmd, 0, f"{cmd[-1]}\tZugriff verweigert\n", "")
+        with mock.patch("fototool.actions.subprocess.run", side_effect=finder_refuses):
+            res = run_job(self.cfg, self.ctx, "duplikate",
+                          DupParams(str(root), "aeltestes", "papierkorb", probelauf=False, bestaetigt=True))
+        row = next(r for r in res.rows if r.get("Datei", "").endswith("b.jpg"))
+        self.assertEqual(row["Status"], "Fehler")
+        self.assertIn("Zugriff verweigert", row["Info"])
+        self.assertNotIn("In Papierkorb", res.summary)
+        self.assertTrue((root / "b.jpg").exists())
+
+    def test_trash_success_is_journaled(self):
+        from unittest import mock
+        import subprocess
+        root = self.tmp / "fotos"
+        write(root / "a.jpg", b"x" * 100, mtime=1_000_000)
+        write(root / "b.jpg", b"x" * 100, mtime=2_000_000)
+
+        def finder_deletes(cmd, **kw):
+            Path(cmd[-1]).unlink()
+            return subprocess.CompletedProcess(cmd, 0, "\n", "")
+        with mock.patch("fototool.actions.subprocess.run", side_effect=finder_deletes):
+            res = run_job(self.cfg, self.ctx, "duplikate",
+                          DupParams(str(root), "aeltestes", "papierkorb", probelauf=False, bestaetigt=True))
+        self.assertEqual(res.summary.get("In Papierkorb"), 1)
+        from fototool.journal import read_entries
+        self.assertEqual([e["aktion"] for e in read_entries(res.journal)], ["papierkorb"])
+
+    def test_runs_in_same_second_have_own_journal_and_report(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "a.jpg", b"a" * 100)
+        first = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        write(src / "b.jpg", b"b" * 100)
+        second = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertNotEqual(first.journal, second.journal)
+        self.assertFalse(set(first.reports) & set(second.reports))
+        self.assertTrue(all(r.exists() for r in first.reports + second.reports))
+        undo(second.journal, self.ctx)
+        self.assertTrue((dst / "src" / "a.jpg").exists())
+        self.assertFalse((dst / "src" / "b.jpg").exists())
 
 if __name__ == "__main__":
     unittest.main()

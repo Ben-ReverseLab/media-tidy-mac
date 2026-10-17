@@ -24,7 +24,10 @@ def report_dir(cfg: Config, target: Path | None, dry_run: bool) -> Path:
 def write_report(cfg: Config, directory: Path, job: str, title: str, summary: dict[str, object],
                  columns: list[str], rows: list[dict], dry_run: bool) -> list[Path]:
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    base = directory / f"{stamp}_{job}{'_PROBELAUF' if dry_run else ''}"
+    name = f"{stamp}_{job}{'_PROBELAUF' if dry_run else ''}"
+    base, n = directory / name, 2
+    while base.with_suffix(".csv").exists() or base.with_suffix(".html").exists():  # Lauf in derselben Sekunde
+        base, n = directory / f"{name}_{n}", n + 1
     written: list[Path] = []
     if cfg.get("berichte.csv", True):
         p = base.with_suffix(".csv")

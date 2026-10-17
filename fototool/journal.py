@@ -21,7 +21,15 @@ class Journal:
 
     def record(self, action: str, src: Path, dst: Path | None, **extra) -> None:
         if self._fh is None:
-            self._fh = self.file.open("a", encoding="utf-8")
+            # Eigene Datei je Lauf – auch wenn zwei Läufe in derselben Sekunde starten
+            base, n = self.file.stem, 2
+            while True:
+                try:
+                    self._fh = self.file.open("x", encoding="utf-8")
+                    break
+                except FileExistsError:
+                    self.file = self.dir / f"{base}_{n}.jsonl"
+                    n += 1
         entry = {"t": time.time(), "aktion": action, "von": str(src), "nach": str(dst) if dst else None, **extra}
         self._fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         self._fh.flush()
@@ -72,6 +80,14 @@ def undo(file: Path, ctx: RunContext, dry_run: bool = False) -> tuple[int, list[
                     done += 1
                 else:
                     problems.append(f"Datei fehlt: {dst}")
+            elif act == "sidecar_aktualisiert" and dst:
+                backup = Path(e.get("sicherung") or "")
+                if backup.is_file():
+                    if not dry_run:
+                        shutil.copy2(backup, dst)
+                    done += 1
+                else:
+                    problems.append(f"Alte Version fehlt, nicht wiederherstellbar: {dst}")
             elif act == "papierkorb":
                 problems.append(f"Aus Papierkorb manuell wiederherstellen: {src.name}")
             elif act == "ueberschrieben":

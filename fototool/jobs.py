@@ -32,6 +32,12 @@ STATUS_TEXT = {
     "duplikat": "Duplikat",
     "papierkorb": "In Papierkorb",
     "bereits_richtig": "Liegt schon richtig",
+    "leer": "Leere Datei (0 Byte) – vermutlich defekt",
+    "sidecar_ergaenzt": "Sidecar ergänzt",
+    "sidecar_aktualisiert": "Sidecar aktualisiert",
+    "sidecar_fehlt": "Sidecar fehlt im Ziel",
+    "sidecar_geaendert": "Sidecar geändert",
+    "sidecar_ziel_neuer": "Sidecar im Ziel neuer – nicht ersetzt",
 }
 # Im Probelauf: was passieren würde
 DRY_TEXT = {
@@ -39,6 +45,8 @@ DRY_TEXT = {
     "verschoben": "Würde verschoben",
     "ueberschrieben": "Würde überschrieben",
     "papierkorb": "Würde in Papierkorb",
+    "sidecar_ergaenzt": "Sidecar würde ergänzt",
+    "sidecar_aktualisiert": "Sidecar würde aktualisiert",
 }
 
 
@@ -169,6 +177,18 @@ class Job:
             self.ctx.message(f"  ⚠️ {len(errors)} nicht lesbar (z.B. {errors[0]})", logging.WARNING)
         return entries
 
+    def split_empty(self, entries: list[FileEntry], res: JobResult) -> list[FileEntry]:
+        """Leere Dateien (0 Byte) als defekt melden statt vergleichen – sie wären sonst alle „gleich“."""
+        if not self.cfg.get("scan.leere_dateien_als_defekt", True):
+            return entries
+        empty = [e for e in entries if e.size == 0]
+        for e in empty:
+            res.rows.append({"Status": STATUS_TEXT["leer"], "Datei": str(e.path), "Größe": "0 B",
+                             "Info": "nicht verglichen, nicht kopiert"})
+        if empty:
+            self.ctx.message(f"  ⚠️ {len(empty)} leere Datei(en) (0 Byte) – vermutlich defekt", logging.WARNING)
+        return [e for e in entries if e.size > 0]
+
     def group(self, entries: list[FileEntry], res: JobResult, need=None) -> list[list[FileEntry]]:
         if self.method == "hash":
             return self.hasher.group_identical(entries, self.ctx, res.errors, need)
@@ -187,7 +207,15 @@ class Job:
     def finish(self, res: JobResult, ops: FileOps | None, journal: Journal | None,
                target: Path | None, dry_run: bool, columns: list[str]) -> JobResult:
         if ops:
-            res.errors += ops.flush_trash()
+            ops.flush_trash()
+            fixed = set()
+            for row in res.rows:  # Bericht darf nicht „In Papierkorb“ sagen, wenn der Finder es verweigert hat
+                path = Path(row.get("Datei") or "")
+                if row.get("Status") == STATUS_TEXT["papierkorb"] and path in ops.trash_failed:
+                    row["Status"] = STATUS_TEXT["fehler"]
+                    row["Info"] = f"Papierkorb fehlgeschlagen: {ops.trash_failed[path]}"
+                    fixed.add(path)
+            res.errors += [f"Papierkorb: {p}: {why}" for p, why in ops.trash_failed.items() if p not in fixed]
         if journal:
             journal.close()
             if journal.file.exists():
@@ -242,6 +270,10 @@ class SyncJob(Job):
             if p.fehlende_kopieren and not p.probelauf:
                 raise AccessError(msg + " Abbruch, damit nichts doppelt kopiert wird." + ACCESS_HINT)
             self.ctx.message("⚠️ " + msg, logging.WARNING)
+        n_src_all = len(src_entries)
+        src_entries = self.split_empty(src_entries, res)
+        if self.cfg.get("scan.leere_dateien_als_defekt", True):
+            tgt_entries = [e for e in tgt_entries if e.size > 0]
         src_ids = {id(e) for e in src_entries}
 
         def need(g):  # nur Gruppen mit Quelldatei und mehr als einem Mitglied sind relevant
@@ -253,11 +285,16 @@ class SyncJob(Job):
         else:
             groups = self.group(src_entries + tgt_entries, res, need)
         missing: list[FileEntry] = []
+        sync_sidecars = self.cfg.get("abgleich.sidecars_abgleichen", True)
+        sidecar_src: dict[Path, Path] = {}  # Ziel-Sidecar -> neueste passende Quell-Sidecar
         for g in groups:
             in_src = [e for e in g if id(e) in src_ids]
             in_tgt = [e for e in g if id(e) not in src_ids]
             if not in_src:
                 continue
+            in_src.sort(key=lambda e: -len(e.sidecars))  # die Kopie mit Sidecars bevorzugen
+            if in_tgt and sync_sidecars:
+                self._collect_sidecars(in_src, in_tgt[0], sidecar_src)
             if in_tgt:
                 for e in in_src:
                     res.rows.append({"Status": STATUS_TEXT["vorhanden"], "Datei": str(e.path),
@@ -267,16 +304,20 @@ class SyncJob(Job):
                 for e in in_src[1:]:
                     res.rows.append({"Status": STATUS_TEXT["doppelt_in_quelle"], "Datei": str(e.path),
                                      "Größe": human_size(e.size), "Info": f"gleich wie {in_src[0].path}"})
+        sidecar_todo = self._compare_sidecars(sidecar_src, res)
         res.summary = {"Quellen": ", ".join(map(str, sources)), "Ziel": str(target),
-                       "Dateien in Quellen": len(src_entries), "Dateien im Ziel": len(tgt_entries),
+                       "Dateien in Quellen": n_src_all, "Dateien im Ziel": len(tgt_entries),
                        "Fehlen im Ziel": len(missing),
                        "Größe fehlend": human_size(sum(e.size for e in missing))}
         if target_incomplete:
             res.summary["⚠️ Ziel unvollständig gelesen"] = f"{target_incomplete} nicht lesbar – Ergebnis unsicher"
-        self.ctx.message(f"→ {len(missing)} Dateien fehlen im Ziel ({res.summary['Größe fehlend']})")
+        if sidecar_todo:
+            res.summary["Sidecars fehlend/geändert"] = len(sidecar_todo)
+        self.ctx.message(f"→ {len(missing)} Dateien fehlen im Ziel ({res.summary['Größe fehlend']})"
+                         + (f", {len(sidecar_todo)} Sidecars fehlen/geändert" if sidecar_todo else ""))
 
         ops = journal = None
-        if p.fehlende_kopieren and missing:
+        if p.fehlende_kopieren and (missing or sidecar_todo):
             journal = None if p.probelauf else Journal(self.cfg.data_dir, self.name)
             ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
             meta = {}
@@ -294,12 +335,57 @@ class SyncJob(Job):
                 r = ops.place(e, dst, "copy", overwrite_ok=p.bestaetigt)
                 res.rows.append(self._row(r, p.probelauf, **{"Größe": human_size(e.size)}))
                 self.ctx.progress("Kopieren" if not p.probelauf else "Vorschau", i, len(missing))
+            replace = self.cfg.get("abgleich.sidecar_geaendert", "neuer_ersetzt") == "neuer_ersetzt"
+            for kind, sc, dst in sidecar_todo:
+                self.ctx.check()
+                if kind == "fehlt":
+                    r = ops.add_sidecar(sc, dst)
+                elif kind == "geaendert" and replace:
+                    r = ops.replace_sidecar(sc, dst)
+                else:
+                    r = Result("sidecar_geaendert" if kind == "geaendert" else "sidecar_ziel_neuer", sc, dst)
+                res.rows.append(self._row(r, p.probelauf))
         else:
             for e in missing:
                 res.rows.append({"Status": STATUS_TEXT["fehlt"], "Datei": str(e.path), "Größe": human_size(e.size)})
+            for kind, sc, dst in sidecar_todo:
+                status = {"fehlt": "sidecar_fehlt", "geaendert": "sidecar_geaendert"}.get(kind, "sidecar_ziel_neuer")
+                res.rows.append({"Status": STATUS_TEXT[status], "Datei": str(sc), "Ziel": str(dst)})
         # Bericht nur ins Ziel, wenn dort auch etwas kopiert wurde – sonst in den Datenordner
         report_target = target if (ops and target.exists()) else None
         return self.finish(res, ops, journal, report_target, p.probelauf, self.columns)
+
+
+    def _collect_sidecars(self, in_src: list[FileEntry], match: FileEntry, out: dict[Path, Path]) -> None:
+        """Sidecars der Quelle der passenden Ziel-Sidecar zuordnen (bei mehreren Quellen: die neueste)."""
+        for e in in_src:
+            for sc in e.sidecars:
+                same = [t for t in match.sidecars if t.suffix.lower() == sc.suffix.lower()]
+                dst = same[0] if same else FileOps._sidecar_dst(sc, e.path, match.path)
+                if not same and dst.exists():
+                    continue  # gehört im Ziel zu einer anderen Datei (z.B. RAW neben JPG)
+                try:
+                    if dst not in out or sc.stat().st_mtime > out[dst].stat().st_mtime:
+                        out[dst] = sc
+                except OSError:
+                    continue
+
+    def _compare_sidecars(self, pairs: dict[Path, Path], res: JobResult) -> list[tuple[str, Path, Path]]:
+        """[(art, quelle, ziel)] mit art = fehlt | geaendert | ziel_neuer; identische entfallen."""
+        todo = []
+        for dst, sc in sorted(pairs.items()):
+            try:
+                if not dst.exists():
+                    todo.append(("fehlt", sc, dst))
+                    continue
+                a, b = sc.stat(), dst.stat()
+                if a.st_size == b.st_size and self.hasher.full_hash_file(sc) == self.hasher.full_hash_file(dst):
+                    continue
+                # 2 s Spielraum: exFAT/FAT speichern Zeiten nur auf 2 Sekunden genau
+                todo.append(("geaendert" if a.st_mtime > b.st_mtime + 2 else "ziel_neuer", sc, dst))
+            except OSError as err:
+                res.errors.append(f"{sc}: {err.strerror or err}")
+        return todo
 
 
 # --- 2. Duplikate ------------------------------------------------------------
@@ -319,14 +405,18 @@ class DupJob(Job):
     def run(self, p: DupParams) -> JobResult:
         res = JobResult("Duplikate im Ordner")
         root = Path(p.ordner).expanduser()
+        dup_root = root / p.duplikat_ordner
         entries = self.scan(root, res)
+        n_all = len(entries)
+        # Schon aussortierte Duplikate nicht erneut finden (auch bei eigenem Ordnernamen)
+        entries = [e for e in entries if not e.path.is_relative_to(dup_root)]
+        entries = self.split_empty(entries, res)
         self.ctx.message("Suche Duplikate …")
         groups = sorted((g for g in self.group(entries, res) if len(g) > 1),
                         key=lambda g: str(min(e.path for e in g)))
         rule = KEEP_RULES.get(p.behalten, KEEP_RULES["aeltestes"])
         journal = None if (p.probelauf or p.aktion == "bericht") else Journal(self.cfg.data_dir, self.name)
         ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
-        dup_root = root / p.duplikat_ordner
         wasted = 0
         for n, g in enumerate(groups, 1):
             self.ctx.check()
@@ -345,10 +435,12 @@ class DupJob(Job):
                     r = Result("duplikat", e.path, None)
                 res.rows.append({"Gruppe": n, **self._row(r, p.probelauf, **{"Größe": human_size(e.size)})})
             self.ctx.progress("Duplikate behandeln", n, len(groups))
-        res.summary = {"Ordner": str(root), "Dateien": len(entries), "Duplikat-Gruppen": len(groups),
+        res.summary = {"Ordner": str(root), "Dateien": n_all, "Duplikat-Gruppen": len(groups),
                        "Überzählige Dateien": sum(len(g) - 1 for g in groups),
                        "Platz durch Duplikate": human_size(wasted), "Aktion": p.aktion,
                        "Behalten-Regel": p.behalten}
+        if empty := sum(1 for r in res.rows if r["Status"] == STATUS_TEXT["leer"]):
+            res.summary["Leere Dateien (defekt)"] = empty
         self.ctx.message(f"→ {len(groups)} Gruppen, {res.summary['Überzählige Dateien']} überzählig "
                          f"({res.summary['Platz durch Duplikate']})")
         return self.finish(res, ops, journal, root if p.aktion != "bericht" else None,
@@ -385,7 +477,10 @@ class SortJob(Job):
                 res.rows.append({"Status": STATUS_TEXT["bereits_richtig"], "Datei": str(e.path), **extra})
                 continue
             r = ops.place(e, dst, mode, overwrite_ok=p.bestaetigt)
-            res.rows.append(self._row(r, p.probelauf, **extra))
+            row = self._row(r, p.probelauf, **extra)
+            if e.size == 0 and self.cfg.get("scan.leere_dateien_als_defekt", True):
+                row["Info"] = (row["Info"] + " – leere Datei (0 Byte), vermutlich defekt").lstrip(" –")
+            res.rows.append(row)
             self.ctx.progress("Sortieren" if not p.probelauf else "Vorschau", i, len(entries))
         res.summary = {"Quelle": str(src), "Ziel": str(target), "Muster": p.muster,
                        "Dateiname": p.dateiname or "(unverändert)", "Modus": p.modus,

@@ -18,6 +18,7 @@ class FileEntry:
     root: Path  # Quellordner, aus dem die Datei stammt
     sidecars: list[Path] = field(default_factory=list)
     rel_override: Path | None = None  # Pfad im Ziel für Dateien aus Bibliotheken
+    source_label: str = ""  # Name der Quelle im Ziel (vom Scanner gesetzt)
 
     @property
     def rel(self) -> Path:
@@ -27,7 +28,7 @@ class FileEntry:
     @property
     def label(self) -> str:
         """Name der Quelle (Bibliotheken ohne Endung, damit im Ziel kein Paket entsteht)."""
-        return self.root.stem if self.root.suffix else self.root.name
+        return self.source_label or self.root.name
 
     @property
     def ext(self) -> str:
@@ -98,12 +99,14 @@ class Scanner:
         media: list[FileEntry] = []
         sidecars: dict[Path, list[Path]] = {}
         rule = self._library_rule(root.name)
+        # Nur Bibliotheken verlieren ihre Endung – "Urlaub 2025.08" bleibt "Urlaub 2025.08"
+        label = root.with_suffix("").name if rule else root.name
         walker = self._walk_library(root, rule, ctx, errors) if rule else self._walk(root, ctx, errors)
         for n, (e, rel_base) in enumerate(walker, 1):
             p = Path(e.path)
             ext = p.suffix.lower().lstrip(".")
             if ext in self.sidecar_exts:
-                sidecars.setdefault(p.with_suffix(""), []).append(p)
+                sidecars.setdefault(_key(p.with_suffix("")), []).append(p)
                 continue
             if ext not in self.exts:
                 continue
@@ -118,10 +121,28 @@ class Scanner:
                 rel = p.relative_to(inner)
                 if replacement != root.with_suffix(""):  # Bibliothek liegt innerhalb der Quelle
                     rel = replacement.relative_to(root) / rel
-            media.append(FileEntry(p, st.st_size, st.st_mtime, root, rel_override=rel))
+            media.append(FileEntry(p, st.st_size, st.st_mtime, root, rel_override=rel, source_label=label))
             if n % 500 == 0:
                 ctx.progress(f"Durchsuche {root.name}", len(media), 0)
-        # Sidecars zuordnen: "IMG_1.xmp" und "IMG_1.CR3.xmp" gehören zu IMG_1.CR3
-        for m in media:
-            m.sidecars = sidecars.get(m.path.with_suffix(""), []) + sidecars.get(m.path, [])
+        self._assign_sidecars(media, sidecars)
         return media, errors
+
+    def _assign_sidecars(self, media: list[FileEntry], sidecars: dict[str, list[Path]]) -> None:
+        """"IMG_1.CR3.xmp" gehört genau zu IMG_1.CR3. "IMG_1.xmp" kann zu mehreren Dateien passen
+        (RAW+JPG, Live Photo HEIC+MOV) – dann bekommt sie nur eine: RAW vor Foto vor Video,
+        damit z.B. ein JPG-Duplikat nie die XMP-Bearbeitung der RAW mitnimmt."""
+        by_stem: dict[str, list[FileEntry]] = {}
+        for m in media:
+            by_stem.setdefault(_key(m.path.with_suffix("")), []).append(m)
+        for stem, members in by_stem.items():
+            owner = min(members, key=lambda m: (TYPE_PRIORITY.get(self.cfg.file_type(m.ext), 9), m.path.name))
+            for m in members:
+                m.sidecars = (sidecars.get(stem, []) if m is owner else []) + sidecars.get(_key(m.path), [])
+
+
+TYPE_PRIORITY = {"RAW": 0, "Foto": 1, "Video": 2}
+
+
+def _key(p: Path) -> str:
+    """Vergleichsschlüssel ohne Groß-/Kleinschreibung (macOS-Dateisysteme unterscheiden sie nicht)."""
+    return str(p).lower()

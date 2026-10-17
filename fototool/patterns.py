@@ -82,7 +82,7 @@ class PatternRenderer:
             "Endung": e.ext.upper(),
             "Name": e.path.stem,
             "Ordner": e.path.parent.name,
-            "Quelle": e.root.name,
+            "Quelle": e.label,
         }
 
     def _clean(self, s: str) -> str:

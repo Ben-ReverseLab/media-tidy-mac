@@ -27,6 +27,8 @@ ignorieren = [
 versteckte_ignorieren = true
 # Symbolischen Links folgen
 symlinks_folgen = false
+# Leere Dateien (0 Byte) als „vermutlich defekt“ melden, statt sie zu vergleichen oder zu kopieren
+leere_dateien_als_defekt = true
 
 # Paket-Bibliotheken: Bei Ordnern mit dieser Endung werden nur die
 # angegebenen Unterpfade gelesen (Glob, relativ zum Paket).
@@ -121,6 +123,12 @@ geschuetzt = ["*.photoslibrary*", "*.lrlibrary*", "*.photolibrary*"]
 fehlende_ablage = "struktur"
 # Bei "struktur": Name des Quellordners als oberste Ebene im Ziel anlegen
 quellordner_als_ebene = true
+# Sidecars (XMP, AAE) von Dateien, die schon im Ziel liegen, mit abgleichen:
+# fehlende ergänzen, geänderte melden bzw. ersetzen
+sidecars_abgleichen = true
+# Geänderte Sidecars: "neuer_ersetzt" (im Ziel ersetzen, wenn die Quelle neuer ist – die alte Version
+# wird aufbewahrt und lässt sich über Rückgängig zurückholen) | "nur_bericht"
+sidecar_geaendert = "neuer_ersetzt"
 
 [duplikate]
 # Welche Datei bleibt: "aeltestes" | "neuestes" | "kuerzester_pfad" | "laengster_pfad" | "erster"
@@ -146,4 +154,4 @@ lightroom_kataloge = ["~/Pictures/Lightroom/*.lrcat", "~/Pictures/Lightroom*/*.l
 
 [oberflaeche]
 schriftgroesse = 13
-fenster = "1000x720"
+fenster = "1100x800"

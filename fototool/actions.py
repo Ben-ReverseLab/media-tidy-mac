@@ -42,6 +42,8 @@ class FileOps:
         self.with_sidecars = cfg.get("dateien.sidecars_mitnehmen", True)
         self.reserved: set[Path] = set()  # im Probelauf geplante Ziele
         self._trash_queue: list[Path] = []
+        self.trash_failed: dict[Path, str] = {}  # Pfad -> Grund, falls der Finder nicht löschen konnte
+        self._backup_n = 0
 
     # --- Hilfen --------------------------------------------------------------
     def is_protected(self, p: Path) -> bool:
@@ -96,7 +98,8 @@ class FileOps:
         self._copy_file(src, dst)  # anderes Laufwerk: kopieren + prüfen + löschen
         os.unlink(src)
 
-    def _sidecar_dst(self, sidecar: Path, src: Path, dst: Path) -> Path:
+    @staticmethod
+    def _sidecar_dst(sidecar: Path, src: Path, dst: Path) -> Path:
         if sidecar.name.lower().startswith(src.name.lower() + "."):  # IMG.CR3.xmp
             return dst.with_name(dst.name + sidecar.suffix)
         return dst.with_name(dst.stem + sidecar.suffix)  # IMG.xmp
@@ -195,6 +198,40 @@ class FileOps:
                 return Result("fehler", e.path, dst, str(err))
         return Result("verschoben", e.path, dst)
 
+    # --- Sidecars bereits gesicherter Dateien (Abgleich) -------------------------
+    def add_sidecar(self, sc: Path, dst: Path) -> Result:
+        """Fehlende Sidecar neben die schon gesicherte Datei kopieren."""
+        if self._exists(dst):
+            return Result("identisch_vorhanden", sc, dst)
+        self.reserved.add(dst)
+        if not self.dry_run:
+            try:
+                self._copy_file(sc, dst)
+            except OSError as err:
+                return Result("fehler", sc, dst, str(err))
+            if self.journal:
+                self.journal.record("kopiert", sc, dst)
+        return Result("sidecar_ergaenzt", sc, dst)
+
+    def replace_sidecar(self, sc: Path, dst: Path) -> Result:
+        """Geänderte Sidecar im Ziel ersetzen; die alte Version wird für Rückgängig aufbewahrt."""
+        if not self.dry_run:
+            if self.journal:
+                backup_dir = self.journal.dir / (self.journal.file.stem + "_alte_sidecars")
+            else:
+                backup_dir = self.cfg.data_dir / "alte_sidecars"
+            try:
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                self._backup_n += 1
+                backup = backup_dir / f"{self._backup_n:05d}_{dst.name}"
+                shutil.copy2(dst, backup)
+                self._copy_file(sc, dst)
+            except OSError as err:
+                return Result("fehler", sc, dst, str(err))
+            if self.journal:
+                self.journal.record("sidecar_aktualisiert", sc, dst, sicherung=str(backup))
+        return Result("sidecar_aktualisiert", sc, dst)
+
     def trash(self, e: FileEntry) -> Result:
         if self.is_protected(e.path):
             return Result("geschuetzt", e.path, None, "geschützt – nicht gelöscht")
@@ -206,19 +243,36 @@ class FileOps:
         return Result("papierkorb", e.path, None)
 
     def flush_trash(self) -> list[str]:
-        """Dateien über den Finder in den Papierkorb legen (wiederherstellbar)."""
+        """Dateien über den Finder in den Papierkorb legen (wiederherstellbar).
+        Was nicht gelöscht werden konnte, steht danach in self.trash_failed."""
         errors: list[str] = []
         queue, self._trash_queue = self._trash_queue, []
         if not queue:
             return errors
-        script = ['on run argv', 'repeat with p in argv',
-                  'tell application "Finder" to delete (POSIX file (p as text))',
-                  'end repeat', 'end run']
+        # "POSIX file" muss außerhalb des Finder-Blocks entstehen, sonst Fehler -1728.
+        # Jede Datei einzeln, damit ein Fehler nicht den Rest verhindert.
+        script = ['on run argv', 'set failed to {}', 'repeat with p in argv', 'try',
+                  'set f to POSIX file (p as text)', 'tell application "Finder" to delete f',
+                  'on error msg', 'set end of failed to (p as text) & tab & msg', 'end try', 'end repeat',
+                  "set AppleScript's text item delimiters to linefeed", 'return failed as text', 'end run']
         cmd = ["osascript"] + sum((["-e", s] for s in script), []) + [str(p) for p in queue]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            errors.append(f"Papierkorb: {res.stderr.strip()}")
-        elif self.journal:
-            for p in queue:
+        failed: dict[Path, str] = {}
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=60 + 5 * len(queue))
+            if res.returncode != 0:
+                failed = {p: res.stderr.strip() or "Finder-Fehler" for p in queue}
+            for line in res.stdout.splitlines():
+                path, _, msg = line.partition("\t")
+                if path:
+                    failed[Path(path)] = msg.strip()
+        except (OSError, subprocess.TimeoutExpired) as err:
+            failed = {p: str(err) for p in queue}
+        for p in queue:
+            if p not in failed and p.exists():  # zur Sicherheit: liegt noch da = nicht gelöscht
+                failed[p] = "Datei liegt noch am Ort"
+            if p in failed:
+                self.trash_failed[p] = failed[p]
+                errors.append(f"Papierkorb: {p}: {failed[p]}")
+            elif self.journal:
                 self.journal.record("papierkorb", p, None)
         return errors
