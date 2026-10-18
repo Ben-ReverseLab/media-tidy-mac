@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fototool.config import Config, Profiles  # noqa: E402
-from fototool.context import RunContext  # noqa: E402
+from fototool.context import Declined, RunContext  # noqa: E402
 from fototool.jobs import AccessError, DupParams, SortParams, SyncParams, run_job  # noqa: E402
 from fototool.journal import list_journals, read_entries, undo  # noqa: E402
 from fototool.metadata import MetadataReader  # noqa: E402
@@ -287,6 +287,36 @@ def t_meta():
        (z.get("d.CR3"), z.get("e.mp4")))
     ok("Zusammenfassung zählt Dateien ohne EXIF-Datum (c.heic, d.CR3)", res.summary.get("Ohne Aufnahmedatum (EXIF)") == 2,
        res.summary.get("Ohne Aufnahmedatum (EXIF)"))
+    # Namensprüfung vor dem Lauf: nur Namen ohne Zuordnung, Antwort wird übernommen und gespeichert
+    c = cfg("s2-pruefen", metadaten__kamera_namen={"Canon EOS R6m2": "R6 II"})
+    asked = []
+    def answer(todo):
+        asked.append(todo)
+        return {ph: {raw: ("R5" if raw == "Canon EOS R5" else prop) for raw, (prop, _) in found.items()}
+                for ph, found in todo.items()}
+    Zp = ROOT / "s2-pruefen-ziel"
+    res = run(c, "sortieren", SortParams(str(S), str(Zp), "{Kamera}/{Jahr}", "", "copy", False, bestaetigt=True),
+              RunContext(on_names=answer))
+    names = set(asked[0].get("Kamera", {})) if asked else set()
+    ok("Namensprüfung: nur nicht zugeordnete Kameras gefragt", "Canon EOS R5" in names and "Canon EOS R6m2" not in names
+       and set(asked[0]) == {"Kamera"}, asked)
+    ok("Namensprüfung: geänderter Name als Ordner", (Zp / "R5" / "2025" / "b.jpg").exists(), sorted(map(str, Zp.rglob("*.jpg"))))
+    ok("Namensprüfung: Zuordnung gespeichert (auch unverändert übernommene)",
+       Config(c.user_dir).get("metadaten.kamera_namen", {}).get("Canon EOS R5") == "R5"
+       and "EOS/R6:II*?" in Config(c.user_dir).get("metadaten.kamera_namen", {}), Config(c.user_dir).get("metadaten.kamera_namen"))
+    asked.clear()
+    run(Config(c.user_dir), "sortieren", SortParams(str(S), str(Zp), "{Kamera}/{Jahr}", "", "copy", True), RunContext(on_names=answer))
+    ok("Namensprüfung: zweiter Lauf fragt nicht erneut", not asked, asked)
+    def decline(todo):
+        raise Declined()
+    Zd = ROOT / "s2-pruefen-abgelehnt"
+    res = run(cfg("s2-ablehnen"), "sortieren", SortParams(str(S), str(Zd), "{Kamera}/{Objektiv}", "", "copy", False,
+                                                           bestaetigt=True), RunContext(on_names=decline))
+    ok("Namensprüfung abgelehnt: nichts kopiert, kein Bericht", res is None and not Zd.exists(), res)
+    asked.clear()
+    run(cfg("s2-ohne-namen"), "sortieren", SortParams(str(S), str(Zp), "{Jahr}/{Monat}", "", "copy", True),
+        RunContext(on_names=answer))
+    ok("Namensprüfung: Muster ohne Namen fragt nicht", not asked, asked)
     for bad_pat in ("{Jahr}/{Foo}", "../{Jahr}", "/abs/{Jahr}", "{Jahr"):
         try:
             run(c, "sortieren", SortParams(str(S), str(ROOT / "s2-ziel2"), bad_pat, "", "copy", True))

@@ -9,11 +9,11 @@ from pathlib import Path
 
 from .actions import FileOps, Result
 from .config import Config
-from .context import Cancelled, RunContext
+from .context import Cancelled, Declined, RunContext
 from .hashing import HashCache, Hasher, group_by_key
 from .journal import Journal
-from .metadata import Meta, MetadataReader
-from .patterns import PatternRenderer, validate
+from .metadata import NAME_FIELDS, Meta, MetadataReader, assign_names, unassigned_names
+from .patterns import PatternRenderer, placeholders_in, validate
 from .report import report_dirs, write_report
 from .scan import FileEntry, Scanner
 
@@ -187,6 +187,24 @@ class Job:
         res.summary["Vergleich"] = text if safe else "⚠️ " + text
         if not safe:
             self.ctx.message(f"⚠️ Vergleich: {text}", logging.WARNING)
+
+    def review_names(self, meta: dict[Path, Meta], *patterns: str) -> None:
+        """Namen aus den Metadaten ohne Zuordnung vor dem ersten Schritt bestätigen lassen und speichern."""
+        if not self.cfg.get("metadaten.namen_pruefen", True):
+            return
+        used = {ph for pat in patterns if pat for ph in placeholders_in(pat)}
+        todo = unassigned_names(self.cfg, list(meta.values()), [ph for ph in NAME_FIELDS if ph in used])
+        if not todo:
+            return
+        chosen = self.ctx.review_names(todo)
+        if chosen is None:  # keine Oberfläche (Kommandozeile)
+            names = ", ".join(n for found in todo.values() for n in found)
+            self.ctx.message(f"⚠️ Namen ohne Zuordnung (Einstellungen → Metadaten): {names}", logging.WARNING)
+            return
+        assign_names(self.cfg, list(meta.values()), chosen)
+        self.cfg.save()
+        self.ctx.message("Namen übernommen: " + ", ".join(f"{a} → {b}" for names in chosen.values()
+                                                          for a, b in names.items()))
 
     def scan(self, root: Path, res: JobResult) -> list[FileEntry]:
         ensure_access(root)
@@ -370,6 +388,7 @@ class SyncJob(Job):
             renderer = PatternRenderer(self.cfg)
             if p.ablage == "muster":
                 meta = MetadataReader(self.cfg).read(missing, self.ctx)
+                self.review_names(meta, p.muster, p.dateiname)
             levels = self.cfg.get("abgleich.quellordner_als_ebene", True)
             for i, e in enumerate(missing, 1):
                 self.ctx.check()
@@ -511,6 +530,7 @@ class SortJob(Job):
         if target != src and target.is_relative_to(src):
             entries = [e for e in entries if not e.path.is_relative_to(target)]
         meta = MetadataReader(self.cfg).read(entries, self.ctx)
+        self.review_names(meta, p.muster, p.dateiname)
         renderer = PatternRenderer(self.cfg)
         journal = self.journal = None if p.probelauf else Journal(self.cfg.data_dir, self.name)
         ops = self.ops = FileOps(self.cfg, self.hasher, journal, p.probelauf)
@@ -542,10 +562,13 @@ class SortJob(Job):
 JOBS = {"abgleich": SyncJob, "duplikate": DupJob, "sortieren": SortJob}
 
 
-def run_job(cfg: Config, ctx: RunContext, job: str, params) -> JobResult:
+def run_job(cfg: Config, ctx: RunContext, job: str, params) -> JobResult | None:
     j = JOBS[job](cfg, ctx)
     try:
         return j.run(params)
+    except Declined:
+        ctx.message("Abgebrochen – nichts verändert.")
+        return None
     except Cancelled:
         ctx.message("Abgebrochen – Teilbericht wird geschrieben.")
         return j.finish_cancelled(params.probelauf)

@@ -45,6 +45,8 @@ Prüfen, ob alles bereit ist: `python3 -m fototool pruefen`
 
 Beispiele: `{Jahr}/{Jahr}-{Monat}-{Tag}`, `{Kamera}/{Jahr}`, Dateiname `{Jahr}{Monat}{Tag}_{Stunde}{Minute}{Sekunde}_{Name}`
 
+**Namensprüfung:** Kommen `{Kamera}`, `{Hersteller}` oder `{Objektiv}` im Muster vor, zeigt FotoTool nach dem Lesen der Metadaten – vor jeder Änderung – alle Namen ohne Zuordnung (z.B. Drohne mit unterschiedlichen Modellnamen in Fotos und Videos). Namen anpassen oder übernehmen; die Zuordnung wird in Einstellungen → Metadaten (`kamera_namen`, `hersteller_namen`, `objektiv_namen`) gespeichert und nicht erneut abgefragt. Abschalten: `metadaten.namen_pruefen = false`.
+
 ## Kommandozeile (Automatisierung)
 
 ```sh

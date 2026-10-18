@@ -75,10 +75,21 @@ unbekannt = "Unbekannt"
 hersteller_aus_kamera_entfernen = false
 # Dateien pro exiftool-Aufruf
 batch_groesse = 200
+# Vor dem Lauf neue Namen ({Kamera}, {Hersteller}, {Objektiv} im Muster) zur Prüfung anzeigen;
+# bestätigte Namen landen in den Zuordnungen unten und werden nicht erneut abgefragt
+namen_pruefen = true
 
 # Umbenennung von Kameranamen (exakter Name = Anzeigename)
 [metadaten.kamera_namen]
 # "Canon EOS R6m2" = "R6 II"
+
+# Umbenennung von Herstellernamen (exakter Name = Anzeigename)
+[metadaten.hersteller_namen]
+# "Canon" = "Canon"
+
+# Umbenennung von Objektivnamen (exakter Name = Anzeigename)
+[metadaten.objektiv_namen]
+# "RF24-105mm F4 L IS USM" = "RF 24-105 F4"
 
 [muster]
 # Vorlagen für Ordnerstrukturen (Auswahl im Programm)

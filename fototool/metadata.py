@@ -6,13 +6,16 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from .config import Config
 from .context import RunContext
 from .scan import FileEntry
+
+# Platzhalter mit Namen aus den Metadaten -> Meta-Attribut; Zuordnung in metadaten.<attribut>_namen
+NAME_FIELDS = {"Kamera": "kamera", "Hersteller": "hersteller", "Objektiv": "objektiv"}
 
 EXIFTOOL_CANDIDATES = ["/opt/homebrew/bin/exiftool", "/usr/local/bin/exiftool", "/usr/bin/exiftool"]
 
@@ -35,6 +38,35 @@ class Meta:
     kamera: str = ""
     hersteller: str = ""
     objektiv: str = ""
+    roh: dict[str, str] = field(default_factory=dict)  # Platzhalter -> Name wie in der Datei
+
+
+def name_map(cfg: Config, placeholder: str) -> dict[str, str]:
+    return cfg.get(f"metadaten.{NAME_FIELDS[placeholder]}_namen", {}) or {}
+
+
+def unassigned_names(cfg: Config, metas: list[Meta], placeholders: list[str]) -> dict[str, dict[str, tuple[str, int]]]:
+    """Platzhalter -> {Name in Datei: (Vorschlag, Anzahl Dateien)} für Namen ohne Zuordnung in der Config."""
+    out: dict[str, dict[str, tuple[str, int]]] = {}
+    for ph in placeholders:
+        known, found = name_map(cfg, ph), {}
+        for m in metas:
+            raw = m.roh.get(ph, "")
+            if raw and raw not in known:
+                proposal, n = found.get(raw, (getattr(m, NAME_FIELDS[ph]), 0))
+                found[raw] = (proposal, n + 1)
+        if found:
+            out[ph] = dict(sorted(found.items()))
+    return out
+
+
+def assign_names(cfg: Config, metas: list[Meta], chosen: dict[str, dict[str, str]]) -> None:
+    """Zuordnung in die Config übernehmen (ohne zu speichern) und auf die gelesenen Metadaten anwenden."""
+    for ph, names in chosen.items():
+        cfg.set(f"metadaten.{NAME_FIELDS[ph]}_namen", {**name_map(cfg, ph), **names})
+        for m in metas:
+            if m.roh.get(ph) in names:
+                setattr(m, NAME_FIELDS[ph], names[m.roh[ph]])
 
 
 def parse_exif_date(value) -> datetime | None:
@@ -58,7 +90,7 @@ class MetadataReader:
         self.camera_fields = cfg.get("metadaten.kamera_felder", [])
         self.make_fields = cfg.get("metadaten.hersteller_felder", [])
         self.lens_fields = cfg.get("metadaten.objektiv_felder", [])
-        self.camera_names = cfg.get("metadaten.kamera_namen", {}) or {}
+        self.names = {ph: name_map(cfg, ph) for ph in NAME_FIELDS}
         self.strip_make = cfg.get("metadaten.hersteller_aus_kamera_entfernen", False)
         self.batch = max(1, int(cfg.get("metadaten.batch_groesse", 200)))
 
@@ -102,15 +134,16 @@ class MetadataReader:
                 m.datum, m.datum_quelle = d, f
                 break
         m.hersteller = self._first(raw, self.make_fields)
-        cam = self._first(raw, self.camera_fields)
-        if cam in self.camera_names:
-            cam = self.camera_names[cam]
-        elif self.strip_make and m.hersteller:
-            first_word = m.hersteller.split()[0]
-            if cam.lower().startswith(first_word.lower()):
-                cam = cam[len(first_word):].strip()
-        m.kamera = cam
+        m.kamera = self._first(raw, self.camera_fields)
         m.objektiv = self._first(raw, self.lens_fields)
+        m.roh = {ph: getattr(m, attr) for ph, attr in NAME_FIELDS.items()}
+        if self.strip_make and m.hersteller:
+            first_word = m.hersteller.split()[0]
+            if m.kamera.lower().startswith(first_word.lower()):
+                m.kamera = m.kamera[len(first_word):].strip()
+        for ph, attr in NAME_FIELDS.items():
+            if m.roh[ph] in self.names[ph]:
+                setattr(m, attr, self.names[ph][m.roh[ph]])
         return m
 
     def read(self, entries: list[FileEntry], ctx: RunContext) -> dict[Path, Meta]:

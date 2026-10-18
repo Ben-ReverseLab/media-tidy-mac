@@ -13,11 +13,12 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import __version__
 from .config import DEFAULTS_FILE, Config, Profiles
-from .context import Cancelled, RunContext
+from .context import Cancelled, Declined, RunContext
 from .deps import check
 from .jobs import DupParams, JobResult, SortParams, SyncParams, params_from_dict, params_to_dict, run_job
 from .journal import list_journals, read_entries, undo
 from .lightroom import affected_catalogs
+from .metadata import assign_names
 from .patterns import PLACEHOLDERS, PatternError, validate
 
 # Auswahllisten für Einstellungen (Schlüssel -> erlaubte Werte)
@@ -884,7 +885,8 @@ class App:
         if self.worker and self.worker.is_alive():
             return
         self.ctx = RunContext(on_message=lambda m: self.q.put(("msg", m)),
-                              on_progress=lambda ph, d, t: self.q.put(("prog", (ph, d, t))))
+                              on_progress=lambda ph, d, t: self.q.put(("prog", (ph, d, t))),
+                              on_names=lambda todo: self._names_from_worker(todo))
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
         ctx = self.ctx
@@ -908,6 +910,73 @@ class App:
         self.worker = threading.Thread(target=target, daemon=True)
         self.worker.start()
 
+    def _names_from_worker(self, todo: dict) -> dict:
+        """Läuft im Arbeits-Thread: Dialog im Haupt-Thread öffnen und auf die Antwort warten."""
+        answer, ev = {}, threading.Event()
+        self.q.put(("names", (todo, answer, ev)))
+        while not ev.wait(0.2):
+            self.ctx.check()
+        if answer["namen"] is None:
+            raise Declined()
+        return answer["namen"]
+
+    def _names_dialog(self, todo: dict) -> dict | None:
+        """Neue Namen aus den Metadaten anzeigen; Rückgabe {Platzhalter: {Name in Datei: Zielname}} oder None."""
+        win = tk.Toplevel(self.root, bg=P["papier"], padx=20, pady=16)
+        win.title("Namen prüfen")
+        win.transient(self.root)
+        win.columnconfigure(0, weight=1)
+        ttk.Label(win, text="Neue Namen aus den Metadaten", style="H2.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(win, style="Hint.TLabel", wraplength=560, justify="left",
+                  text="Diese Namen haben noch keine Zuordnung und werden so als Ordner-/Dateiname verwendet. "
+                       "Bei Bedarf rechts anpassen – gleicher Name = gleicher Ordner. Die Zuordnung wird "
+                       "gespeichert (Einstellungen → Metadaten) und nicht erneut abgefragt."
+                  ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+        rows = sum(len(v) for v in todo.values()) + len(todo)
+        canvas = tk.Canvas(win, bg=P["papier"], highlightthickness=0, height=min(420, 34 * rows + 30), width=600)
+        bar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.grid(row=2, column=0, sticky="nsew")
+        if 34 * rows + 30 > 420:
+            bar.grid(row=2, column=1, sticky="ns")
+        grid = ttk.Frame(canvas)
+        canvas.create_window(0, 0, window=grid, anchor="nw")
+        grid.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
+        grid.columnconfigure(2, weight=1)
+        entries: dict[str, dict[str, tk.StringVar]] = {}
+        r = 0
+        for ph, found in todo.items():
+            ttk.Label(grid, text=f"{{{ph}}}", font=self.fonts["bold"]).grid(row=r, column=0, sticky="w", pady=(8, 2))
+            ttk.Label(grid, text="Dateien", style="Hint.TLabel").grid(row=r, column=1, sticky="e", padx=8)
+            ttk.Label(grid, text="wird zu", style="Hint.TLabel").grid(row=r, column=2, sticky="w")
+            r += 1
+            for raw, (proposal, n) in found.items():
+                ttk.Label(grid, text=raw, font=self.fonts["mono"]).grid(row=r, column=0, sticky="w", padx=(0, 8))
+                ttk.Label(grid, text=str(n), style="Hint.TLabel").grid(row=r, column=1, sticky="e", padx=8)
+                var = tk.StringVar(value=proposal)
+                ttk.Entry(grid, textvariable=var, width=28).grid(row=r, column=2, sticky="ew", pady=2)
+                entries.setdefault(ph, {})[raw] = var
+                r += 1
+        result: dict = {}
+
+        def accept():
+            result["namen"] = {ph: {raw: v.get().strip() or todo[ph][raw][0] for raw, v in names.items()}
+                               for ph, names in entries.items()}
+            win.destroy()
+
+        btns = ttk.Frame(win)
+        btns.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(btns, text="Abbrechen", command=win.destroy).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="Übernehmen und fortfahren", style="Probe.TButton", command=accept).pack(side="left")
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        win.grab_set()
+        win.focus_set()
+        self.root.wait_window(win)
+        if "namen" in result:  # Einstellungsseite zeigt sonst die alte Zuordnung und würde sie zurückschreiben
+            assign_names(self.cfg, [], result["namen"])  # der Lauf speichert sie anschließend
+            self._fill_settings()
+        return result.get("namen")
+
     def _poll(self):
         try:
             while True:
@@ -925,6 +994,10 @@ class App:
                         self.prog_label.configure(text=f"{phase}: {done} Dateien")
                 elif kind == "alert":
                     messagebox.showerror("FotoTool", data)
+                elif kind == "names":
+                    todo, answer, ev = data
+                    answer["namen"] = self._names_dialog(todo)
+                    ev.set()
                 elif kind == "done":
                     self._finished(data)
         except queue.Empty:
