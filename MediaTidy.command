@@ -1,3 +1,3 @@
 #!/bin/zsh
-# Doppelklick startet MediaTidy (Rechte braucht dann das Terminal – besser MediaTidy.app nutzen).
+# Double-click starts MediaTidy (then Terminal needs the permissions – better use MediaTidy.app).
 exec "$(dirname "$0")/app/start.sh" "$@"

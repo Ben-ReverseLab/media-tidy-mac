@@ -1,3 +1,3 @@
-"""MediaTidy – Fotos abgleichen, Duplikate finden, nach Metadaten sortieren."""
+"""MediaTidy – sync photos between drives, find duplicates, sort by metadata."""
 
-__version__ = "1.0.0"
+__version__ = "0.2.0"

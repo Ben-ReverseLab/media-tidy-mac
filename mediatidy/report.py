@@ -1,4 +1,4 @@
-"""CSV- und HTML-Berichte."""
+"""CSV and HTML reports."""
 from __future__ import annotations
 
 import csv
@@ -9,47 +9,49 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Config
+from .i18n import language, t
 
 log = logging.getLogger("mediatidy")
 
+TARGET_REPORT_DIR = "_MediaTidy-Reports"
+
 
 def report_dirs(cfg: Config, target: Path | None, dry_run: bool) -> list[Path]:
-    """Erster Ordner ist lokal: Browser dürfen externe Laufwerke oft nicht lesen, der Bericht muss aber
-    immer zu öffnen sein. Echte Läufe legen zusätzlich eine Kopie in <ziel>/_MediaTidy-Berichte ab."""
-    custom = (cfg.get("berichte.ordner") or "").strip()
+    """The first folder is local: browsers often may not read external drives, but the report must
+    always open. Real runs also put a copy into <target>/_MediaTidy-Reports."""
+    custom = (cfg.get("reports.folder") or "").strip()
     if custom:
         return [Path(custom).expanduser()]
-    dirs = [cfg.data_dir / "berichte"]
-    if not dry_run and target is not None:  # Probelauf verändert den Zielordner nicht
-        dirs.append(target / "_MediaTidy-Berichte")
+    dirs = [cfg.data_dir / "reports"]
+    if not dry_run and target is not None:  # a dry run doesn't change the target
+        dirs.append(target / TARGET_REPORT_DIR)
     return dirs
 
 
-def write_report(cfg: Config, directories: list[Path], job: str, title: str, summary: dict[str, object],
-                 columns: list[str], rows: list[dict], dry_run: bool) -> list[Path]:
+def write_report(cfg: Config, directories: list[Path], job: str, title: str, summary: list[tuple[str, object]],
+                 headers: list[str], rows: list[list[object]], dry_run: bool) -> list[Path]:
     directory, *copies = directories
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    name = f"{stamp}_{job}{'_PROBELAUF' if dry_run else ''}"
+    name = f"{stamp}_{job}{'_DRYRUN' if dry_run else ''}"
     base, n = directory / name, 2
-    while base.with_suffix(".csv").exists() or base.with_suffix(".html").exists():  # Lauf in derselben Sekunde
+    while base.with_suffix(".csv").exists() or base.with_suffix(".html").exists():  # run in the same second
         base, n = directory / f"{name}_{n}", n + 1
     written: list[Path] = []
-    if cfg.get("berichte.csv", True):
+    if cfg.get("reports.csv", True):
         p = base.with_suffix(".csv")
-        with p.open("w", newline="", encoding="utf-8-sig") as f:  # BOM -> Excel erkennt Umlaute
-            w = csv.DictWriter(f, fieldnames=columns, delimiter=";", extrasaction="ignore")
-            w.writeheader()
+        with p.open("w", newline="", encoding="utf-8-sig") as f:  # BOM -> Excel detects umlauts
+            w = csv.writer(f, delimiter=";")
+            w.writerow(headers)
             w.writerows(rows)
         written.append(p)
-    if cfg.get("berichte.html", True):
+    if cfg.get("reports.html", True):
         p = base.with_suffix(".html")
         esc = html.escape
-        summ = "".join(f"<tr><th>{esc(str(k))}</th><td>{esc(str(v))}</td></tr>" for k, v in summary.items())
-        head = "".join(f"<th>{esc(c)}</th>" for c in columns)
-        body = "\n".join("<tr>" + "".join(f"<td>{esc(str(r.get(c, '')))}</td>" for c in columns) + "</tr>"
-                         for r in rows)
-        p.write_text(f"""<!doctype html><html lang="de"><meta charset="utf-8">
+        summ = "".join(f"<tr><th>{esc(str(k))}</th><td>{esc(str(v))}</td></tr>" for k, v in summary)
+        head = "".join(f"<th>{esc(c)}</th>" for c in headers)
+        body = "\n".join("<tr>" + "".join(f"<td>{esc(str(c))}</td>" for c in r) + "</tr>" for r in rows)
+        p.write_text(f"""<!doctype html><html lang="{language()}"><meta charset="utf-8">
 <title>{esc(title)}</title>
 <style>
 body{{font:14px -apple-system,system-ui,sans-serif;margin:24px;color:#222;background:#fff}}
@@ -61,10 +63,10 @@ input{{padding:6px;width:320px;margin:8px 0}}
 tbody tr:nth-child(even){{background:#262626}} .dry{{background:#5c4b14}}}}
 </style>
 <h1>{esc(title)}</h1>
-{'<p class="dry">Probelauf – es wurde nichts verändert.</p>' if dry_run else ''}
-<p>Erstellt: {datetime.now():%d.%m.%Y %H:%M}</p>
+{f'<p class="dry">{esc(t("report.dry_note"))}</p>' if dry_run else ''}
+<p>{esc(t("report.created", time=datetime.now().strftime(t("format.datetime"))))}</p>
 <table>{summ}</table>
-<input placeholder="Filtern…" oninput="for(const r of document.querySelectorAll('#d tbody tr'))r.hidden=!r.textContent.toLowerCase().includes(this.value.toLowerCase())">
+<input placeholder="{esc(t("report.filter"))}" oninput="for(const r of document.querySelectorAll('#d tbody tr'))r.hidden=!r.textContent.toLowerCase().includes(this.value.toLowerCase())">
 <table id="d"><thead><tr>{head}</tr></thead><tbody>
 {body}
 </tbody></table></html>""", encoding="utf-8")
@@ -75,5 +77,5 @@ tbody tr:nth-child(even){{background:#262626}} .dry{{background:#5c4b14}}}}
             d.mkdir(parents=True, exist_ok=True)
             written += [Path(shutil.copy2(p, d)) for p in local]
         except OSError as e:
-            log.warning("Berichtskopie nach %s fehlgeschlagen: %s", d, e)
+            log.warning("Copying the report to %s failed: %s", d, e)
     return written

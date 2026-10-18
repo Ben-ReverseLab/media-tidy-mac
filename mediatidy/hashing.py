@@ -1,4 +1,4 @@
-"""Inhaltsvergleich: Größe -> Teil-Hash -> voller Hash, mit SQLite-Cache."""
+"""Content comparison: size -> partial hash -> full hash, with an SQLite cache."""
 from __future__ import annotations
 
 import hashlib
@@ -21,7 +21,7 @@ class HashCache:
             path TEXT, size INTEGER, mtime REAL, algo TEXT, kind TEXT, digest TEXT,
             PRIMARY KEY (path, algo, kind))""")
         if "ctime" not in {r[1] for r in self.db.execute("PRAGMA table_info(hashes)")}:
-            self.db.execute("ALTER TABLE hashes ADD COLUMN ctime REAL")  # ältere Caches
+            self.db.execute("ALTER TABLE hashes ADD COLUMN ctime REAL")  # older caches
         self.db.commit()
 
     def get(self, e: FileEntry, algo: str, kind: str) -> str | None:
@@ -31,7 +31,7 @@ class HashCache:
                 (str(e.path), algo, kind)).fetchone()
         if not row or row[0] != e.size or abs(row[1] - e.mtime) >= 1e-3:
             return None
-        # Änderungszeit lässt sich zurücksetzen, ctime nicht: anderer ctime -> neu prüfen
+        # The modification time can be set back, ctime can't: different ctime -> check again
         if e.ctime and (row[3] is None or abs(row[3] - e.ctime) >= 1e-3):
             return None
         return row[2]
@@ -56,14 +56,14 @@ class HashCache:
 
 class Hasher:
     def __init__(self, cfg: Config, cache: HashCache | None = None):
-        self.algo = cfg.get("vergleich.hash_algorithmus", "blake2b")
-        hashlib.new(self.algo)  # prüft, ob Algorithmus existiert
-        self.partial = int(cfg.get("vergleich.teilhash_kb", 1024)) * 1024
-        self.bufsize = max(64, int(cfg.get("vergleich.lesepuffer_kb", 4096))) * 1024
-        self.threads = max(1, int(cfg.get("vergleich.threads", 4)))
-        self.threads_ext = max(1, int(cfg.get("vergleich.threads_extern", 1)))
-        self.full = bool(cfg.get("vergleich.voller_hash", True))
-        self.commit_every = max(1, int(cfg.get("vergleich.cache_speichern_alle", 100)))
+        self.algo = cfg.get("compare.hash_algorithm", "blake2b")
+        hashlib.new(self.algo)  # checks that the algorithm exists
+        self.partial = int(cfg.get("compare.partial_hash_kb", 1024)) * 1024
+        self.bufsize = max(64, int(cfg.get("compare.read_buffer_kb", 4096))) * 1024
+        self.threads = max(1, int(cfg.get("compare.threads", 4)))
+        self.threads_ext = max(1, int(cfg.get("compare.threads_external", 1)))
+        self.full = bool(cfg.get("compare.full_hash", True))
+        self.commit_every = max(1, int(cfg.get("compare.cache_save_every", 100)))
         self.cache = cache
         self._since_commit = 0
 
@@ -103,7 +103,7 @@ class Hasher:
         if not todo:
             return []
         digests: dict[int, str] = {}
-        label = "Teilvergleich" if kind == "partial" else "Inhaltsvergleich"
+        phase = "partial_compare" if kind == "partial" else "content_compare"
         external = any(str(e.path).startswith("/Volumes/") for e in todo)
         with ThreadPoolExecutor(self.threads_ext if external else self.threads) as pool:
             futures = {pool.submit(self.digest, e, kind): i for i, e in enumerate(todo)}
@@ -118,7 +118,7 @@ class Hasher:
                 except OSError as err:
                     errors.append(f"{todo[i].path}: {err.strerror or err}")
                 if n % 20 == 0 or n == len(todo):
-                    ctx.progress(label, n, len(todo))
+                    ctx.progress(phase, n, len(todo))
         if self.cache:
             self.cache.commit()
         out: list[list[FileEntry]] = []
@@ -135,8 +135,8 @@ class Hasher:
     def group_identical(self, entries: Iterable[FileEntry], ctx: RunContext,
                         errors: list[str], need: Callable[[list[FileEntry]], bool] | None = None
                         ) -> list[list[FileEntry]]:
-        """Gruppen inhaltsgleicher Dateien. Einzelgänger kommen als 1er-Gruppe zurück.
-        `need(gruppe)` entscheidet, ob eine Gruppe weiter verfeinert werden muss."""
+        """Groups of files with identical content. Single files come back as groups of one.
+        `need(group)` decides whether a group has to be refined further."""
         need = need or (lambda g: len(g) > 1)
         by_size: dict[int, list[FileEntry]] = {}
         for e in entries:
@@ -149,11 +149,10 @@ class Hasher:
             pending = [g for g in refined if need(g)]
         return final + pending
 
-
     def match_sync(self, sources: list[FileEntry], targets: list[FileEntry], ctx: RunContext,
                    errors: list[str]) -> list[list[FileEntry]]:
-        """Wie group_identical, aber für Abgleich optimiert: Pro Quelldatei reicht EIN
-        bestätigter Treffer im Ziel – weitere Kopien im Ziel werden nicht gelesen."""
+        """Like group_identical, but optimised for syncing: ONE confirmed match in the target is
+        enough per source file – further copies in the target are not read."""
         src_ids = {id(e) for e in sources}
         by_size: dict[int, list[FileEntry]] = {}
         for e in sources + targets:
@@ -195,7 +194,7 @@ class Hasher:
                         match = t
                         break
                 out.append(same + ([match] if match else []))
-            ctx.progress("Inhaltsvergleich", n, len(todo))
+            ctx.progress("content_compare", n, len(todo))
         if self.cache:
             self.cache.commit()
         return out

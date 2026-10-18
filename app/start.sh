@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Startet MediaTidy mit dem ersten Python (>= 3.11, mit tkinter), das gefunden wird.
-# Wird von MediaTidy.app und MediaTidy.command benutzt – Änderungen hier brauchen keinen App-Neubau.
-# Eigenes Python erzwingen: MEDIATIDY_PYTHON=/pfad/zu/python3
+# Starts MediaTidy with the first Python (>= 3.11, with tkinter) that is found.
+# Used by MediaTidy.app and MediaTidy.command – changes here don't need an app rebuild.
+# Force a specific Python: MEDIATIDY_PYTHON=/path/to/python3
 cd "$(dirname "$0")/.."
 candidates=(
   $MEDIATIDY_PYTHON
@@ -15,6 +15,11 @@ for py in $candidates; do
     exec "$py" -m mediatidy "$@"
   fi
 done
-echo "Kein passendes Python gefunden (nötig: Python ab 3.11 mit tkinter)." >&2
-echo "Installieren: brew install python-tk@3.14" >&2
+if defaults read -g AppleLanguages 2>/dev/null | sed -n 2p | grep -q '"de'; then
+  echo "Kein passendes Python gefunden (nötig: Python ab 3.11 mit tkinter)." >&2
+  echo "Installieren: brew install python-tk@3.14" >&2
+else
+  echo "No suitable Python found (needed: Python 3.11 or later with tkinter)." >&2
+  echo "Install: brew install python-tk@3.14" >&2
+fi
 exit 1

@@ -1,168 +1,171 @@
-# MediaTidy – Standardeinstellungen.
-# Nicht hier ändern: eigene Werte gehören in ~/.mediatidy/config.toml
-# (oder im Programm unter "Einstellungen"). Fehlende Werte kommen von hier.
+# MediaTidy – default settings.
+# Don't edit this file: your own values belong in ~/.mediatidy/config.toml
+# (or in the app under "Settings"). Anything missing there comes from here.
+# The comment above each setting is its English help text in the app; German help texts live in locales/de.toml.
 
-version = 1
+version = 2
 
-[dateien]
-# Dateiendungen je Gruppe (klein geschrieben, ohne Punkt)
-foto = ["jpg", "jpeg", "heic", "heif", "png", "tif", "tiff", "webp", "gif", "bmp"]
+[files]
+# File extensions per group (lower case, without dot)
+photo = ["jpg", "jpeg", "heic", "heif", "png", "tif", "tiff", "webp", "gif", "bmp"]
 raw = ["cr3", "cr2", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "dng", "srw", "3fr", "iiq", "x3f"]
 video = ["mp4", "mov", "m4v", "avi", "mts", "m2ts", "3gp", "mkv"]
 sidecar = ["xmp", "aae"]
-# Welche Gruppen werden verarbeitet
-aktive_gruppen = ["foto", "raw", "video"]
-# Sidecars (z.B. .xmp) beim Kopieren/Verschieben mitnehmen
-sidecars_mitnehmen = true
+# Groups that are processed
+active_groups = ["photo", "raw", "video"]
+# Take sidecars (e.g. .xmp) along when copying/moving
+include_sidecars = true
 
 [scan]
-# Glob-Muster für Datei- und Ordnernamen, die übersprungen werden
-ignorieren = [
+# Glob patterns for file and folder names that are skipped
+ignore = [
   ".DS_Store", "._*", ".localized", "Thumbs.db", "desktop.ini",
   ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems",
   "*.lrdata", "*.lrcat", "*.lrcat-data", "Old Lightroom Catalogs",
-  "_Duplikate", "_MediaTidy-Berichte",
+  "_Duplicates", "_Duplikate", "_MediaTidy-Reports",
 ]
-# Versteckte Dateien/Ordner (Name beginnt mit ".") überspringen
-versteckte_ignorieren = true
-# Symbolischen Links folgen
-symlinks_folgen = false
-# Leere Dateien (0 Byte) als „vermutlich defekt“ melden, statt sie zu vergleichen oder zu kopieren
-leere_dateien_als_defekt = true
+# Skip hidden files/folders (name starts with ".")
+skip_hidden = true
+# Follow symbolic links
+follow_symlinks = false
+# Report empty files (0 bytes) as "probably damaged" instead of comparing or copying them
+empty_files_as_defect = true
 
-# Paket-Bibliotheken: Bei Ordnern mit dieser Endung werden nur die
-# angegebenen Unterpfade gelesen (Glob, relativ zum Paket).
-[[scan.bibliotheken]]
-endung = ".photoslibrary"
-unterordner = ["originals"]
+# Package libraries: inside folders with this extension only the
+# given subpaths are read (glob, relative to the package).
+[[scan.libraries]]
+extension = ".photoslibrary"
+subfolders = ["originals"]
 
-[[scan.bibliotheken]]
-endung = ".lrlibrary"
-unterordner = ["*/originals"]
+[[scan.libraries]]
+extension = ".lrlibrary"
+subfolders = ["*/originals"]
 
-[[scan.bibliotheken]]
-endung = ".photolibrary"
-unterordner = ["Masters"]
+[[scan.libraries]]
+extension = ".photolibrary"
+subfolders = ["Masters"]
 
-[vergleich]
-# "hash" (Inhalt, sicher) | "name_groesse" | "name_groesse_datum"
-methode = "hash"
+[compare]
+# "hash" (content, safe) | "name_size" | "name_size_date"
+method = "hash"
 # "blake2b" | "sha256" | "md5" | "sha1"
-hash_algorithmus = "blake2b"
-# Teil-Hash: so viele KB vom Anfang und vom Ende als Vorfilter
-teilhash_kb = 1024
-# Puffergröße beim Lesen in KB
-lesepuffer_kb = 4096
-# Parallele Lese-Threads für interne SSD
+hash_algorithm = "blake2b"
+# Partial hash: this many KB from the start and the end as a pre-filter
+partial_hash_kb = 1024
+# Read buffer size in KB
+read_buffer_kb = 4096
+# Parallel read threads for internal SSDs
 threads = 4
-# Parallele Lese-Threads, sobald externe Laufwerke (/Volumes) beteiligt sind (Festplatten: 1)
-threads_extern = 1
-# Nach gleichem Teil-Hash zur Sicherheit die ganze Datei vergleichen.
-# false = deutlich schneller (Größe + Anfang + Ende identisch gilt als gleich), minimal unsicherer
-voller_hash = true
-# Prüfsummen-Cache alle n Dateien speichern (Fortschritt bleibt bei Absturz erhalten)
-cache_speichern_alle = 100
+# Parallel read threads as soon as external drives (/Volumes) are involved (hard disks: 1)
+threads_external = 1
+# After an identical partial hash, compare the whole file to be sure.
+# false = much faster (same size + start + end counts as identical), slightly less safe
+full_hash = true
+# Save the checksum cache every n files (progress survives a crash)
+cache_save_every = 100
 
-[metadaten]
-# Reihenfolge der Quellen für das Aufnahmedatum; "datei_mtime" = Änderungsdatum
-datum_felder = ["DateTimeOriginal", "CreateDate", "MediaCreateDate", "ModifyDate", "datei_mtime"]
-kamera_felder = ["Model", "UniqueCameraModel"]
-hersteller_felder = ["Make"]
-objektiv_felder = ["LensModel", "LensID", "Lens"]
-# Ersatztext, wenn kein Wert gefunden wurde
-unbekannt = "Unbekannt"
-# Hersteller-Namen aus dem Kameranamen entfernen ("Canon EOS R6" -> "EOS R6")
-hersteller_aus_kamera_entfernen = false
-# Dateien pro exiftool-Aufruf
-batch_groesse = 200
-# Vor dem Lauf neue Namen ({Kamera}, {Hersteller}, {Objektiv} im Muster) zur Prüfung anzeigen;
-# bestätigte Namen landen in den Zuordnungen unten und werden nicht erneut abgefragt
-namen_pruefen = true
+[metadata]
+# Order of sources for the capture date; "file_mtime" = file modification date
+date_fields = ["DateTimeOriginal", "CreateDate", "MediaCreateDate", "ModifyDate", "file_mtime"]
+camera_fields = ["Model", "UniqueCameraModel"]
+make_fields = ["Make"]
+lens_fields = ["LensModel", "LensID", "Lens"]
+# Text used when no value was found; empty = "Unknown" in the app language
+unknown = ""
+# Remove the make from the camera name ("Canon EOS R6" -> "EOS R6")
+strip_make_from_camera = false
+# Files per exiftool call
+batch_size = 200
+# Before a run, show new names ({Camera}, {Make}, {Lens} in the pattern) for review;
+# confirmed names are stored in the mappings below and not asked again
+review_names = true
 
-# Umbenennung von Kameranamen (exakter Name = Anzeigename)
-[metadaten.kamera_namen]
+# Renaming of camera names (exact name = display name)
+[metadata.camera_names]
 # "Canon EOS R6m2" = "R6 II"
 
-# Umbenennung von Herstellernamen (exakter Name = Anzeigename)
-[metadaten.hersteller_namen]
+# Renaming of camera makes (exact name = display name)
+[metadata.make_names]
 # "Canon" = "Canon"
 
-# Umbenennung von Objektivnamen (exakter Name = Anzeigename)
-[metadaten.objektiv_namen]
+# Renaming of lens names (exact name = display name)
+[metadata.lens_names]
 # "RF24-105mm F4 L IS USM" = "RF 24-105 F4"
 
-[muster]
-# Vorlagen für Ordnerstrukturen (Auswahl im Programm)
-vorlagen = [
-  "{Jahr}/{Jahr}-{Monat}-{Tag}",
-  "{Jahr}/{Monat}",
-  "{Jahr}/{Jahr}-{Monat}",
-  "{Kamera}/{Jahr}/{Jahr}-{Monat}-{Tag}",
-  "{Jahr}/{Kamera}",
-  "{Hersteller}/{Kamera}/{Jahr}",
-  "{Typ}/{Jahr}/{Monat}",
-  "{Objektiv}/{Jahr}",
+[patterns]
+# Folder structure presets (selectable in the app)
+presets = [
+  "{Year}/{Year}-{Month}-{Day}",
+  "{Year}/{Month}",
+  "{Year}/{Year}-{Month}",
+  "{Camera}/{Year}/{Year}-{Month}-{Day}",
+  "{Year}/{Camera}",
+  "{Make}/{Camera}/{Year}",
+  "{Type}/{Year}/{Month}",
+  "{Lens}/{Year}",
 ]
-standard = "{Jahr}/{Jahr}-{Monat}-{Tag}"
-# Dateinamen-Muster; leer = Originalname behalten
-# z.B. "{Jahr}{Monat}{Tag}_{Stunde}{Minute}{Sekunde}_{Name}"
-dateiname = ""
-# Monatsnamen für {MonatName}
-monatsnamen = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
-# Zeichen, die in Ordnernamen ersetzt werden
-ungueltige_zeichen = ":/\\?*\"<>|"
-ersatzzeichen = "_"
+default = "{Year}/{Year}-{Month}-{Day}"
+# File name pattern; empty = keep the original name
+# e.g. "{Year}{Month}{Day}_{Hour}{Minute}{Second}_{Name}"
+filename = ""
+# Month names for {MonthName}; empty = month names in the app language
+month_names = []
+# Characters that are replaced in folder names
+invalid_chars = ":/\\?*\"<>|"
+replacement_char = "_"
 
-[aktionen]
-# Probelauf als Standard (nichts wird verändert, nur Vorschau)
-probelauf = true
-# Namenskollision bei unterschiedlichem Inhalt: "suffix" | "ueberspringen" | "ueberschreiben"
-kollision = "suffix"
-# Muster für Suffix; {n} = laufende Nummer
-suffix_muster = "_{n}"
-# Nach dem Kopieren Inhalt per Hash prüfen
-kopie_pruefen = true
-# Datei-Zeitstempel beim Kopieren erhalten
-zeitstempel_erhalten = true
-# Vor Lösch-/Verschiebe-/Überschreibaktionen nachfragen
-bestaetigen = true
-# Aus diesen Ordnern (und Bibliotheken) wird nie verschoben oder gelöscht (Glob auf Pfad)
-geschuetzt = ["*.photoslibrary*", "*.lrlibrary*", "*.photolibrary*"]
+[actions]
+# Dry run by default (nothing is changed, preview only)
+dry_run = true
+# Name collision with different content: "suffix" | "skip" | "overwrite"
+collision = "suffix"
+# Suffix pattern; {n} = running number
+suffix_pattern = "_{n}"
+# Verify the content by checksum after copying
+verify_copy = true
+# Keep file timestamps when copying
+preserve_timestamps = true
+# Ask before deleting, moving or overwriting
+confirm = true
+# Files in these folders (and libraries) are never moved or deleted (glob on the path)
+protected = ["*.photoslibrary*", "*.lrlibrary*", "*.photolibrary*"]
 
-[abgleich]
-# Fehlende Dateien: "struktur" (Ordnerstruktur behalten) | "muster" (nach Muster sortieren)
-fehlende_ablage = "struktur"
-# Bei "struktur": Name des Quellordners als oberste Ebene im Ziel anlegen
-quellordner_als_ebene = true
-# Sidecars (XMP, AAE) von Dateien, die schon im Ziel liegen, mit abgleichen:
-# fehlende ergänzen, geänderte melden bzw. ersetzen
-sidecars_abgleichen = true
-# Geänderte Sidecars: "neuer_ersetzt" (im Ziel ersetzen, wenn die Quelle neuer ist – die alte Version
-# wird aufbewahrt und lässt sich über Rückgängig zurückholen) | "nur_bericht"
-sidecar_geaendert = "neuer_ersetzt"
+[sync]
+# Missing files: "structure" (keep the folder structure) | "pattern" (sort by pattern)
+missing_placement = "structure"
+# With "structure": create the source folder's name as top level in the target
+source_folder_as_level = true
+# Also sync sidecars (XMP, AAE) of files that are already in the target:
+# add missing ones, report or replace changed ones
+sync_sidecars = true
+# Changed sidecars: "newer_replaces" (replace in the target when the source is newer – the old version
+# is kept and can be restored with Undo) | "report_only"
+changed_sidecar = "newer_replaces"
 
-[duplikate]
-# Welche Datei bleibt: "aeltestes" | "neuestes" | "kuerzester_pfad" | "laengster_pfad" | "erster"
-behalten = "aeltestes"
-# "bericht" | "verschieben" | "papierkorb"
-aktion = "bericht"
-# Zielordner (relativ zum geprüften Ordner) für aussortierte Duplikate
-ordner = "_Duplikate"
+[duplicates]
+# Which file is kept: "oldest" | "newest" | "shortest_path" | "longest_path" | "first"
+keep = "oldest"
+# "report" | "move" | "trash"
+action = "report"
+# Target folder (relative to the checked folder) for duplicates set aside; empty = "_Duplicates" ("_Duplikate" in German)
+folder = ""
 
-[berichte]
-# Ordner für Berichte; leer = Datenordner/berichte, bei echten Läufen zusätzlich Kopie in "_MediaTidy-Berichte" im Zielordner
-ordner = ""
+[reports]
+# Folder for reports; empty = data folder/reports, real runs also put a copy into "_MediaTidy-Reports" in the target
+folder = ""
 csv = true
 html = true
 
-[pfade]
-# Leer = automatisch suchen
+[paths]
+# Empty = find automatically
 exiftool = ""
-# Arbeitsdaten (Cache, Journal, Logs, Profile, Berichte vom Probelauf); leer = Einstellungsordner (~/.mediatidy)
-datenordner = ""
-# Lightroom-Classic-Kataloge (Glob). Beim Verschieben aus deren Ordnern wird gewarnt.
-lightroom_kataloge = ["~/Pictures/Lightroom/*.lrcat", "~/Pictures/Lightroom*/*.lrcat"]
+# Working data (cache, journal, logs, profiles, dry-run reports); empty = settings folder (~/.mediatidy)
+data_dir = ""
+# Lightroom Classic catalogs (glob). Moving files out of their folders shows a warning.
+lightroom_catalogs = ["~/Pictures/Lightroom/*.lrcat", "~/Pictures/Lightroom*/*.lrcat"]
 
-[oberflaeche]
-schriftgroesse = 13
-fenster = "1100x800"
+[ui]
+# "auto" (macOS language) | "en" | "de" – takes effect after a restart
+language = "auto"
+font_size = 13
+window = "1100x800"

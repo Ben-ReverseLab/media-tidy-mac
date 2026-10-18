@@ -1,4 +1,4 @@
-"""Ordner aus Lightroom-Classic-Katalogen lesen (nur lesend)."""
+"""Read folders from Lightroom Classic catalogs (read-only)."""
 from __future__ import annotations
 
 import glob
@@ -11,9 +11,9 @@ from .config import Config
 
 
 def catalog_folders(cfg: Config) -> dict[Path, Path]:
-    """{Ordner: Katalog} aller in Lightroom-Katalogen verknüpften Stammordner."""
+    """{folder: catalog} for all root folders linked in Lightroom catalogs."""
     out: dict[Path, Path] = {}
-    files = {f for pat in cfg.get("pfade.lightroom_kataloge", [])
+    files = {f for pat in cfg.get("paths.lightroom_catalogs", [])
              for f in glob.glob(os.path.expanduser(pat))}
     for cat in sorted(files):
         uri = "file:" + urllib.parse.quote(cat) + "?mode=ro"
@@ -28,7 +28,7 @@ def catalog_folders(cfg: Config) -> dict[Path, Path]:
 
 
 def affected_catalogs(cfg: Config, folder: Path) -> list[str]:
-    """Kataloge, deren Ordner von einer Verschiebung in/aus `folder` betroffen sind."""
+    """Catalogs whose folders are affected by moving files into/out of `folder`."""
     folder = Path(folder).expanduser().resolve()
     hits = []
     for root, cat in catalog_folders(cfg).items():

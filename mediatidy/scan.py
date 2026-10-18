@@ -1,4 +1,4 @@
-"""Ordner rekursiv nach Mediendateien durchsuchen."""
+"""Walk folders recursively and collect media files."""
 from __future__ import annotations
 
 import fnmatch
@@ -15,20 +15,20 @@ class FileEntry:
     path: Path
     size: int
     mtime: float
-    root: Path  # Quellordner, aus dem die Datei stammt
+    root: Path  # source folder the file comes from
     sidecars: list[Path] = field(default_factory=list)
-    rel_override: Path | None = None  # Pfad im Ziel für Dateien aus Bibliotheken
-    source_label: str = ""  # Name der Quelle im Ziel (vom Scanner gesetzt)
-    ctime: float = 0.0  # Statusänderung – ändert sich bei jedem Schreiben, lässt sich nicht zurücksetzen
+    rel_override: Path | None = None  # path in the target for files from libraries
+    source_label: str = ""  # name of the source in the target (set by the scanner)
+    ctime: float = 0.0  # status change – changes on every write and can't be set back
 
     @property
     def rel(self) -> Path:
-        """Relativer Pfad zur Quelle; Bibliotheks-Interna (z.B. .../originals) entfallen."""
+        """Path relative to the source; library internals (e.g. .../originals) are left out."""
         return self.rel_override or self.path.relative_to(self.root)
 
     @property
     def label(self) -> str:
-        """Name der Quelle (Bibliotheken ohne Endung, damit im Ziel kein Paket entsteht)."""
+        """Name of the source (libraries without extension, so the target gets no package)."""
         return self.source_label or self.root.name
 
     @property
@@ -40,11 +40,11 @@ class Scanner:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.exts = cfg.extensions()
-        self.sidecar_exts = {e.lower() for e in cfg.get("dateien.sidecar", [])}
-        self.ignore = cfg.get("scan.ignorieren", [])
-        self.skip_hidden = cfg.get("scan.versteckte_ignorieren", True)
-        self.follow = cfg.get("scan.symlinks_folgen", False)
-        self.libraries = cfg.get("scan.bibliotheken", [])
+        self.sidecar_exts = {e.lower() for e in cfg.get("files.sidecar", [])}
+        self.ignore = cfg.get("scan.ignore", [])
+        self.skip_hidden = cfg.get("scan.skip_hidden", True)
+        self.follow = cfg.get("scan.follow_symlinks", False)
+        self.libraries = cfg.get("scan.libraries", [])
 
     def _ignored(self, name: str) -> bool:
         if self.skip_hidden and name.startswith("."):
@@ -53,12 +53,12 @@ class Scanner:
 
     def _library_rule(self, name: str) -> dict | None:
         for rule in self.libraries:
-            if name.lower().endswith(rule.get("endung", "\0").lower()):
+            if name.lower().endswith(rule.get("extension", "\0").lower()):
                 return rule
         return None
 
     def _walk(self, directory: Path, ctx: RunContext, errors: list[str], rel_base: Path | None = None):
-        """Liefert (DirEntry, rel_base). rel_base: (Ordner im Paket, Ersatzpfad) oder None."""
+        """Yields (DirEntry, rel_base). rel_base: (folder inside the package, replacement path) or None."""
         try:
             with os.scandir(directory) as it:
                 entries = list(it)
@@ -82,7 +82,7 @@ class Scanner:
                 errors.append(f"{e.path}: {err.strerror or err}")
 
     def _walk_library(self, lib: Path, rule: dict, ctx: RunContext, errors: list[str]):
-        subs = rule.get("unterordner", [])
+        subs = rule.get("subfolders", [])
         if not subs:
             return
         try:
@@ -94,13 +94,13 @@ class Scanner:
             yield from self._walk(sub, ctx, errors, (sub, lib.with_suffix("")))
 
     def scan(self, root: Path, ctx: RunContext) -> tuple[list[FileEntry], list[str]]:
-        """Liefert (Mediendateien, Fehlermeldungen)."""
+        """Returns (media files, error messages)."""
         root = Path(root).expanduser()
         errors: list[str] = []
         media: list[FileEntry] = []
         sidecars: dict[Path, list[Path]] = {}
         rule = self._library_rule(root.name)
-        # Nur Bibliotheken verlieren ihre Endung – "Urlaub 2025.08" bleibt "Urlaub 2025.08"
+        # Only libraries lose their extension – "Holiday 2025.08" stays "Holiday 2025.08"
         label = root.with_suffix("").name if rule else root.name
         walker = self._walk_library(root, rule, ctx, errors) if rule else self._walk(root, ctx, errors)
         for n, (e, rel_base) in enumerate(walker, 1):
@@ -120,31 +120,31 @@ class Scanner:
             if rel_base:
                 inner, replacement = rel_base
                 rel = p.relative_to(inner)
-                if replacement != root.with_suffix(""):  # Bibliothek liegt innerhalb der Quelle
+                if replacement != root.with_suffix(""):  # library lies inside the source
                     rel = replacement.relative_to(root) / rel
             media.append(FileEntry(p, st.st_size, st.st_mtime, root, rel_override=rel, source_label=label,
                                    ctime=st.st_ctime))
             if n % 500 == 0:
-                ctx.progress(f"Durchsuche {root.name}", len(media), 0)
+                ctx.progress("scan", len(media), 0)
         self._assign_sidecars(media, sidecars)
         return media, errors
 
     def _assign_sidecars(self, media: list[FileEntry], sidecars: dict[str, list[Path]]) -> None:
-        """"IMG_1.CR3.xmp" gehört genau zu IMG_1.CR3. "IMG_1.xmp" kann zu mehreren Dateien passen
-        (RAW+JPG, Live Photo HEIC+MOV) – dann bekommt sie nur eine: RAW vor Foto vor Video,
-        damit z.B. ein JPG-Duplikat nie die XMP-Bearbeitung der RAW mitnimmt."""
+        """"IMG_1.CR3.xmp" belongs to IMG_1.CR3 only. "IMG_1.xmp" can match several files
+        (RAW+JPG, Live Photo HEIC+MOV) – then only one gets it: RAW before photo before video,
+        so that e.g. a duplicate JPG never takes the RAW's XMP edits with it."""
         by_stem: dict[str, list[FileEntry]] = {}
         for m in media:
             by_stem.setdefault(_key(m.path.with_suffix("")), []).append(m)
         for stem, members in by_stem.items():
-            owner = min(members, key=lambda m: (TYPE_PRIORITY.get(self.cfg.file_type(m.ext), 9), m.path.name))
+            owner = min(members, key=lambda m: (GROUP_PRIORITY.get(self.cfg.file_group(m.ext), 9), m.path.name))
             for m in members:
                 m.sidecars = (sidecars.get(stem, []) if m is owner else []) + sidecars.get(_key(m.path), [])
 
 
-TYPE_PRIORITY = {"RAW": 0, "Foto": 1, "Video": 2}
+GROUP_PRIORITY = {"raw": 0, "photo": 1, "video": 2}
 
 
 def _key(p: Path) -> str:
-    """Vergleichsschlüssel ohne Groß-/Kleinschreibung (macOS-Dateisysteme unterscheiden sie nicht)."""
+    """Comparison key ignoring case (macOS file systems don't distinguish it)."""
     return str(p).lower()

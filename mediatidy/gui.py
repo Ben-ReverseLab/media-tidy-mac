@@ -1,67 +1,68 @@
-"""Grafische Oberfläche (tkinter)."""
+"""Graphical user interface (tkinter)."""
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import re
 import subprocess
 import threading
+import time
 import tkinter as tk
 import tkinter.font
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__
+from . import __version__, legacy
 from .config import DEFAULTS_FILE, Config, Profiles
 from .context import Cancelled, Declined, RunContext
 from .deps import check
-from .jobs import DupParams, JobResult, SortParams, SyncParams, params_from_dict, params_to_dict, run_job
-from .journal import list_journals, read_entries, undo
+from .i18n import catalog, language, t
+from .jobs import (DupParams, JobResult, SortParams, SyncParams, default_dup_folder, params_from_dict,
+                   params_to_dict, run_job, summary_items)
+from .journal import is_undone, list_journals, read_entries, undo
 from .lightroom import affected_catalogs
-from .metadata import assign_names
-from .patterns import PLACEHOLDERS, PatternError, validate
+from .metadata import Meta, assign_names
+from .patterns import PLACEHOLDERS, PatternError, PatternRenderer, canonical, localize, validate
+from .scan import FileEntry
 
-# Auswahllisten für Einstellungen (Schlüssel -> erlaubte Werte)
+# Choice lists for settings (key -> allowed values); shown as t("choice.<value>")
 CHOICES = {
-    "vergleich.methode": ["hash", "name_groesse", "name_groesse_datum"],
-    "vergleich.hash_algorithmus": ["blake2b", "sha256", "sha1", "md5"],
-    "aktionen.kollision": ["suffix", "ueberspringen", "ueberschreiben"],
-    "abgleich.fehlende_ablage": ["struktur", "muster"],
-    "abgleich.sidecar_geaendert": ["neuer_ersetzt", "nur_bericht"],
-    "duplikate.behalten": ["aeltestes", "neuestes", "kuerzester_pfad", "laengster_pfad", "erster"],
-    "duplikate.aktion": ["bericht", "verschieben", "papierkorb"],
+    "compare.method": ["hash", "name_size", "name_size_date"],
+    "compare.hash_algorithm": ["blake2b", "sha256", "sha1", "md5"],
+    "actions.collision": ["suffix", "skip", "overwrite"],
+    "sync.missing_placement": ["structure", "pattern"],
+    "sync.changed_sidecar": ["newer_replaces", "report_only"],
+    "duplicates.keep": ["oldest", "newest", "shortest_path", "longest_path", "first"],
+    "duplicates.action": ["report", "move", "trash"],
+    "ui.language": ["auto", "en", "de"],
 }
-LABELS = {
-    "aeltestes": "ältestes", "neuestes": "neuestes", "kuerzester_pfad": "kürzester Pfad",
-    "laengster_pfad": "längster Pfad", "erster": "erster (alphabetisch)",
-    "bericht": "nur Bericht", "verschieben": "in Duplikat-Ordner verschieben", "papierkorb": "in Papierkorb",
-    "struktur": "Ordnerstruktur beibehalten", "muster": "nach Muster sortieren",
-    "copy": "kopieren", "move": "verschieben",
-    "neuer_ersetzt": "ersetzen, wenn Quelle neuer", "nur_bericht": "nur im Bericht melden",
-}
-SECTION_TITLES = {
-    "dateien": "Dateitypen", "scan": "Durchsuchen", "vergleich": "Vergleich", "metadaten": "Metadaten",
-    "muster": "Muster", "aktionen": "Aktionen", "abgleich": "Abgleich", "duplikate": "Duplikate",
-    "berichte": "Berichte", "pfade": "Pfade", "oberflaeche": "Oberfläche",
-}
+# Settings holding patterns: shown with placeholder names in the app language, stored in English
+PATTERN_SETTINGS = {"patterns.presets", "patterns.default", "patterns.filename"}
+STATE_FILE = "last_inputs.json"
 
-# Farben: ruhiges Papier-Grau; Farbe nur dort, wo sie Sicherheit bedeutet
-# (Blau = Probelauf, Bernstein wie Dunkelkammerlicht = echter Lauf).
+# Colours: calm paper grey; colour only where it means safety
+# (blue = dry run, amber like a darkroom safelight = real run).
 P = {
-    "papier": "#F5F6F4", "seite": "#E8EAE7", "linie": "#D3D7D4", "weiss": "#FFFFFF",
-    "graphit": "#23272B", "schiefer": "#646C75",
-    "probe": "#2D6784", "probe_dunkel": "#24546C", "probe_hell": "#E2ECF1",
-    "echt": "#E39A2D", "echt_dunkel": "#CC8620", "echt_hell": "#FBEBD2",
-    "fehler": "#B3261E",
-    "griff": "#868E96",  # Scrollbalken: deutlich vom Hintergrund abgesetzt
+    "paper": "#F5F6F4", "side": "#E8EAE7", "line": "#D3D7D4", "white": "#FFFFFF",
+    "graphite": "#23272B", "slate": "#646C75",
+    "dry": "#2D6784", "dry_dark": "#24546C", "dry_light": "#E2ECF1",
+    "real": "#E39A2D", "real_dark": "#CC8620", "real_light": "#FBEBD2",
+    "error": "#B3261E",
+    "thumb": "#868E96",  # scroll bar: clearly set off from the background
 }
-# Seitenleiste: (Titel, Index im Notebook); None = Abstand
-NAV = [("Abgleich", 0), ("Duplikate", 1), ("Sortieren", 2), None, ("Verlauf", 4), ("Einstellungen", 3)]
-JOBS = ["abgleich", "duplikate", "sortieren"]
+# Sidebar: (job or page key, index in the notebook); None = spacer
+NAV = [("sync", 0), ("duplicates", 1), ("sort", 2), None, ("history", 4), ("settings", 3)]
+JOBS = ["sync", "duplicates", "sort"]
+
+
+def choice_label(value: str) -> str:
+    return t(f"choice.{value}")
 
 
 def parse_comments(file: Path) -> dict[str, str]:
-    """Kommentare aus defaults.toml als Hilfetexte: {"abschnitt.schluessel": "Text"}."""
+    """Comments in defaults.toml as English help texts: {"section.key": "text"}."""
     helps: dict[str, str] = {}
     section, buf = "", []
     for line in file.read_text(encoding="utf-8").splitlines():
@@ -78,49 +79,49 @@ def parse_comments(file: Path) -> dict[str, str]:
                 helps[f"{section}.{m.group(1)}" if section else m.group(1)] = " ".join(buf)
             buf = []
         elif not s:
-            buf = [] if not section else buf
+            buf = []
     return helps
 
 
 def open_path(p: Path) -> None:
     r = subprocess.run(["open", str(p)], check=False, capture_output=True, text=True)
     if r.returncode:
-        messagebox.showerror("Öffnen fehlgeschlagen", f"{p}\n\n{r.stderr.strip()}")
+        messagebox.showerror(t("gui.open_failed"), f"{p}\n\n{r.stderr.strip()}")
 
 
 def text_box(parent, **kw) -> tk.Text:
-    """tk.Text im Stil der übrigen Eingabefelder."""
-    return tk.Text(parent, bg=P["weiss"], fg=P["graphit"], insertbackground=P["graphit"], relief="flat",
-                   highlightthickness=1, highlightbackground=P["linie"], highlightcolor=P["probe"],
-                   selectbackground=P["probe"], selectforeground=P["weiss"], padx=8, pady=6, **kw)
+    """tk.Text styled like the other input fields."""
+    return tk.Text(parent, bg=P["white"], fg=P["graphite"], insertbackground=P["graphite"], relief="flat",
+                   highlightthickness=1, highlightbackground=P["line"], highlightcolor=P["dry"],
+                   selectbackground=P["dry"], selectforeground=P["white"], padx=8, pady=6, **kw)
 
 
 class ChoiceVar:
-    """Combobox mit lesbaren Texten, gibt internen Wert zurück."""
+    """Combobox showing readable texts, returning the internal value."""
 
     def __init__(self, parent, values: list[str], value: str, width=28):
         self.values = values
-        self.var = tk.StringVar(value=LABELS.get(value, value))
+        self.var = tk.StringVar(value=choice_label(value))
         self.widget = ttk.Combobox(parent, textvariable=self.var, state="readonly", width=width,
-                                   values=[LABELS.get(v, v) for v in values])
+                                   values=[choice_label(v) for v in values])
 
     def get(self) -> str:
         shown = self.var.get()
-        return next((v for v in self.values if LABELS.get(v, v) == shown), shown)
+        return next((v for v in self.values if choice_label(v) == shown), shown)
 
     def set(self, value: str) -> None:
-        self.var.set(LABELS.get(value, value))
+        self.var.set(choice_label(value))
 
 
 class ScrollPage:
-    """Senkrecht scrollbarer Bereich: Inhalt kommt in .body. Der Balken erscheint nur, wenn der Inhalt
-    nicht ganz passt. Mausrad/Trackpad leitet App._wheel an den Bereich unter dem Mauszeiger weiter."""
+    """Vertically scrollable area: content goes into .body. The bar only appears when the content
+    doesn't fit. App._wheel passes mouse wheel/trackpad scrolling to the area under the pointer."""
 
     def __init__(self, parent, padding=0):
         self.outer = ttk.Frame(parent)
         self.outer.rowconfigure(0, weight=1)
         self.outer.columnconfigure(0, weight=1)
-        self.canvas = tk.Canvas(self.outer, highlightthickness=0, bg=P["papier"], yscrollincrement=1)
+        self.canvas = tk.Canvas(self.outer, highlightthickness=0, bg=P["paper"], yscrollincrement=1)
         self.canvas.scroll_page = True
         self.bar = ttk.Scrollbar(self.outer, orient="vertical", command=self.canvas.yview)
         self.body = ttk.Frame(self.canvas, padding=padding)
@@ -148,7 +149,7 @@ class App:
         self.root = root
         self.cfg = cfg
         self.profiles = Profiles(cfg)
-        self.state_file = cfg.data_dir / "zuletzt.json"
+        self.state_file = cfg.data_dir / STATE_FILE
         self.q: queue.Queue = queue.Queue()
         self.ctx: RunContext | None = None
         self.worker: threading.Thread | None = None
@@ -156,10 +157,10 @@ class App:
         self.drive_hints: list = []
 
         root.title(f"MediaTidy {__version__}")
-        root.geometry(cfg.get("oberflaeche.fenster", "1100x800"))
+        root.geometry(cfg.get("ui.window", "1100x800"))
         root.minsize(900, 640)
-        root.configure(bg=P["papier"])
-        size = int(cfg.get("oberflaeche.schriftgroesse", 13))
+        root.configure(bg=P["paper"])
+        size = int(cfg.get("ui.font_size", 13))
         for f in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
             try:
                 tk.font.nametofont(f).configure(size=size)
@@ -167,10 +168,10 @@ class App:
                 pass
         self._style(size)
 
-        shell = tk.Frame(root, bg=P["papier"])
+        shell = tk.Frame(root, bg=P["paper"])
         shell.pack(fill="both", expand=True)
         self._build_sidebar(shell)
-        tk.Frame(shell, bg=P["linie"], width=1).pack(side="left", fill="y")
+        tk.Frame(shell, bg=P["line"], width=1).pack(side="left", fill="y")
         self.main = ttk.Frame(shell)
         self.main.pack(side="left", fill="both", expand=True)
 
@@ -189,7 +190,7 @@ class App:
         root.bind("<FocusIn>", lambda e: self._refresh_drives())
         root.bind_all("<MouseWheel>", lambda e: self._wheel(e, touchpad=False))
         try:
-            root.bind_all("<TouchpadScroll>", lambda e: self._wheel(e, touchpad=True))  # ab Tk 9
+            root.bind_all("<TouchpadScroll>", lambda e: self._wheel(e, touchpad=True))  # Tk 9 and later
         except tk.TclError:
             pass
         self._load_state()
@@ -198,9 +199,9 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         hints = check(cfg)
         if hints:
-            self.log("Hinweise:\n" + "\n".join("• " + h for h in hints))
+            self.log(t("gui.hints") + "\n" + "\n".join("• " + h for h in hints))
 
-    # --- Aussehen ---------------------------------------------------------------
+    # --- Look ----------------------------------------------------------------------
     def _style(self, size: int):
         base = tk.font.nametofont("TkDefaultFont").actual("family")
         head = "Futura" if "Futura" in tk.font.families() else base
@@ -211,105 +212,105 @@ class App:
         }
         s = ttk.Style(self.root)
         s.theme_use("clam")
-        s.configure(".", background=P["papier"], foreground=P["graphit"], bordercolor=P["linie"],
-                    lightcolor=P["papier"], darkcolor=P["papier"], troughcolor=P["seite"],
-                    focuscolor=P["probe"], selectbackground=P["probe"], selectforeground=P["weiss"],
-                    fieldbackground=P["weiss"], insertcolor=P["graphit"], arrowcolor=P["graphit"])
-        s.configure("Hint.TLabel", foreground=P["schiefer"], font=self.fonts["small"])
-        s.configure("Error.TLabel", foreground=P["fehler"], font=self.fonts["small"])
+        s.configure(".", background=P["paper"], foreground=P["graphite"], bordercolor=P["line"],
+                    lightcolor=P["paper"], darkcolor=P["paper"], troughcolor=P["side"],
+                    focuscolor=P["dry"], selectbackground=P["dry"], selectforeground=P["white"],
+                    fieldbackground=P["white"], insertcolor=P["graphite"], arrowcolor=P["graphite"])
+        s.configure("Hint.TLabel", foreground=P["slate"], font=self.fonts["small"])
+        s.configure("Error.TLabel", foreground=P["error"], font=self.fonts["small"])
         s.configure("H1.TLabel", font=self.fonts["h1"])
         s.configure("H2.TLabel", font=self.fonts["h2"])
-        s.configure("TButton", padding=(12, 5), background=P["weiss"], bordercolor=P["linie"],
-                    lightcolor=P["weiss"], darkcolor=P["weiss"])
-        s.map("TButton", background=[("disabled", P["papier"]), ("pressed", P["linie"]), ("active", P["seite"])],
-              foreground=[("disabled", P["schiefer"])], bordercolor=[("focus", P["probe"])],
-              lightcolor=[("pressed", P["linie"]), ("active", P["seite"])],
-              darkcolor=[("pressed", P["linie"]), ("active", P["seite"])])
-        for name, bg, dark, fg in (("Probe", P["probe"], P["probe_dunkel"], P["weiss"]),
-                                   ("Echt", P["echt"], P["echt_dunkel"], P["graphit"])):
+        s.configure("TButton", padding=(12, 5), background=P["white"], bordercolor=P["line"],
+                    lightcolor=P["white"], darkcolor=P["white"])
+        s.map("TButton", background=[("disabled", P["paper"]), ("pressed", P["line"]), ("active", P["side"])],
+              foreground=[("disabled", P["slate"])], bordercolor=[("focus", P["dry"])],
+              lightcolor=[("pressed", P["line"]), ("active", P["side"])],
+              darkcolor=[("pressed", P["line"]), ("active", P["side"])])
+        for name, bg, dark, fg in (("Dry", P["dry"], P["dry_dark"], P["white"]),
+                                   ("Real", P["real"], P["real_dark"], P["graphite"])):
             s.configure(f"{name}.TButton", background=bg, foreground=fg, bordercolor=dark, lightcolor=bg,
                         darkcolor=bg, font=self.fonts["bold"], padding=(18, 7))
             s.map(f"{name}.TButton",
-                  background=[("disabled", P["linie"]), ("pressed", dark), ("active", dark)],
-                  lightcolor=[("disabled", P["linie"]), ("pressed", dark), ("active", dark)],
-                  darkcolor=[("disabled", P["linie"]), ("pressed", dark), ("active", dark)],
-                  foreground=[("disabled", P["schiefer"])], bordercolor=[("focus", P["graphit"])])
-        s.configure("TEntry", padding=(6, 4), lightcolor=P["weiss"], darkcolor=P["weiss"])
-        s.map("TEntry", bordercolor=[("focus", P["probe"])], lightcolor=[("focus", P["probe"])])
-        s.configure("TCombobox", padding=(6, 3), background=P["weiss"], lightcolor=P["weiss"], darkcolor=P["weiss"])
-        s.map("TCombobox", fieldbackground=[("disabled", P["papier"]), ("readonly", P["weiss"])],
-              foreground=[("disabled", P["schiefer"])], background=[("active", P["seite"])],
-              selectbackground=[("readonly", P["weiss"])], selectforeground=[("readonly", P["graphit"])],
-              bordercolor=[("focus", P["probe"])])
-        self.root.option_add("*TCombobox*Listbox.background", P["weiss"])
-        self.root.option_add("*TCombobox*Listbox.selectBackground", P["probe"])
-        self.root.option_add("*TCombobox*Listbox.selectForeground", P["weiss"])
-        s.configure("TCheckbutton", indicatorbackground=P["weiss"], indicatorforeground=P["probe"],
-                    upperbordercolor=P["schiefer"], lowerbordercolor=P["schiefer"])
-        s.map("TCheckbutton", background=[("active", P["papier"])],
-              indicatorbackground=[("selected", P["weiss"])])
+                  background=[("disabled", P["line"]), ("pressed", dark), ("active", dark)],
+                  lightcolor=[("disabled", P["line"]), ("pressed", dark), ("active", dark)],
+                  darkcolor=[("disabled", P["line"]), ("pressed", dark), ("active", dark)],
+                  foreground=[("disabled", P["slate"])], bordercolor=[("focus", P["graphite"])])
+        s.configure("TEntry", padding=(6, 4), lightcolor=P["white"], darkcolor=P["white"])
+        s.map("TEntry", bordercolor=[("focus", P["dry"])], lightcolor=[("focus", P["dry"])])
+        s.configure("TCombobox", padding=(6, 3), background=P["white"], lightcolor=P["white"], darkcolor=P["white"])
+        s.map("TCombobox", fieldbackground=[("disabled", P["paper"]), ("readonly", P["white"])],
+              foreground=[("disabled", P["slate"])], background=[("active", P["side"])],
+              selectbackground=[("readonly", P["white"])], selectforeground=[("readonly", P["graphite"])],
+              bordercolor=[("focus", P["dry"])])
+        self.root.option_add("*TCombobox*Listbox.background", P["white"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", P["dry"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", P["white"])
+        s.configure("TCheckbutton", indicatorbackground=P["white"], indicatorforeground=P["dry"],
+                    upperbordercolor=P["slate"], lowerbordercolor=P["slate"])
+        s.map("TCheckbutton", background=[("active", P["paper"])],
+              indicatorbackground=[("selected", P["white"])])
         s.configure("Pages.TNotebook", borderwidth=0, tabmargins=0, padding=0)
-        s.layout("Pages.TNotebook.Tab", [])  # Reiter ausblenden – Navigation über Seitenleiste
-        # Scrollbalken ohne Pfeile, kräftiger Griff auf hellem Schacht
+        s.layout("Pages.TNotebook.Tab", [])  # hide the tabs – navigation is in the sidebar
+        # Scroll bar without arrows, strong thumb on a light trough
         s.layout("Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
             ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
-        s.configure("Vertical.TScrollbar", troughcolor=P["seite"], background=P["griff"], bordercolor=P["seite"],
-                    lightcolor=P["griff"], darkcolor=P["griff"], gripcount=0, arrowsize=5)  # Tk 9 skaliert: ergibt ~17 px
-        s.map("Vertical.TScrollbar", background=[("pressed", P["graphit"]), ("active", P["schiefer"])],
-              lightcolor=[("pressed", P["graphit"]), ("active", P["schiefer"])],
-              darkcolor=[("pressed", P["graphit"]), ("active", P["schiefer"])])
-        s.configure("Run.Horizontal.TProgressbar", background=P["probe"], troughcolor=P["seite"],
-                    bordercolor=P["seite"], lightcolor=P["probe"], darkcolor=P["probe"], thickness=6)
+        s.configure("Vertical.TScrollbar", troughcolor=P["side"], background=P["thumb"], bordercolor=P["side"],
+                    lightcolor=P["thumb"], darkcolor=P["thumb"], gripcount=0, arrowsize=5)  # Tk 9 scales: ~17 px
+        s.map("Vertical.TScrollbar", background=[("pressed", P["graphite"]), ("active", P["slate"])],
+              lightcolor=[("pressed", P["graphite"]), ("active", P["slate"])],
+              darkcolor=[("pressed", P["graphite"]), ("active", P["slate"])])
+        s.configure("Run.Horizontal.TProgressbar", background=P["dry"], troughcolor=P["side"],
+                    bordercolor=P["side"], lightcolor=P["dry"], darkcolor=P["dry"], thickness=6)
         s.configure("Mode.Toolbutton", padding=(12, 5), font=self.fonts["bold"])
 
-    # --- Seitenleiste --------------------------------------------------------------
+    # --- Sidebar ---------------------------------------------------------------------
     def _build_sidebar(self, parent):
-        side = tk.Frame(parent, bg=P["seite"], width=200)
+        side = tk.Frame(parent, bg=P["side"], width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        tk.Label(side, text="MediaTidy", font=self.fonts["h2"], bg=P["seite"], fg=P["graphit"]
+        tk.Label(side, text="MediaTidy", font=self.fonts["h2"], bg=P["side"], fg=P["graphite"]
                  ).pack(anchor="w", padx=22, pady=(26, 0))
-        tk.Label(side, text=f"Version {__version__}", font=self.fonts["small"], bg=P["seite"], fg=P["schiefer"]
-                 ).pack(anchor="w", padx=22, pady=(0, 22))
+        tk.Label(side, text=t("gui.version", version=__version__), font=self.fonts["small"], bg=P["side"],
+                 fg=P["slate"]).pack(anchor="w", padx=22, pady=(0, 22))
         self.nav_items: dict[int, tuple] = {}
-        for n, item in enumerate(NAV):
+        for item in NAV:
             if item is None:
-                tk.Frame(side, bg=P["linie"], height=1).pack(fill="x", padx=22, pady=12)
+                tk.Frame(side, bg=P["line"], height=1).pack(fill="x", padx=22, pady=12)
                 continue
-            title, idx = item
-            row = tk.Frame(side, bg=P["seite"])
+            key, idx = item
+            row = tk.Frame(side, bg=P["side"])
             row.pack(fill="x")
-            mark = tk.Frame(row, bg=P["seite"], width=4)
+            mark = tk.Frame(row, bg=P["side"], width=4)
             mark.pack(side="left", fill="y")
-            lbl = tk.Label(row, text=title, font=self.fonts["nav"], bg=P["seite"], fg=P["schiefer"], anchor="w",
-                           padx=18, pady=7, takefocus=1, highlightthickness=1,
-                           highlightbackground=P["seite"], highlightcolor=P["probe"])
+            lbl = tk.Label(row, text=t(f"nav.{key}"), font=self.fonts["nav"], bg=P["side"], fg=P["slate"],
+                           anchor="w", padx=18, pady=7, takefocus=1, highlightthickness=1,
+                           highlightbackground=P["side"], highlightcolor=P["dry"])
             lbl.pack(side="left", fill="x", expand=True)
             for w in (row, lbl):
                 w.bind("<Button-1>", lambda e, idx=idx: self.nb.select(idx))
-            for key in ("<Return>", "<space>"):
-                lbl.bind(key, lambda e, idx=idx: self.nb.select(idx))
+            for k in ("<Return>", "<space>"):
+                lbl.bind(k, lambda e, idx=idx: self.nb.select(idx))
             self.nav_items[idx] = (row, mark, lbl)
-        tk.Label(side, text="⌘1 – ⌘5 wechselt den Bereich", font=self.fonts["small"], bg=P["seite"],
-                 fg=P["schiefer"]).pack(side="bottom", anchor="w", padx=22, pady=18)
+        tk.Label(side, text=t("gui.shortcuts"), font=self.fonts["small"], bg=P["side"],
+                 fg=P["slate"]).pack(side="bottom", anchor="w", padx=22, pady=18)
 
     def _page_changed(self):
         cur = self.nb.index(self.nb.select())
         for idx, (row, mark, lbl) in self.nav_items.items():
             on = idx == cur
-            bg = P["papier"] if on else P["seite"]
+            bg = P["paper"] if on else P["side"]
             row.configure(bg=bg)
-            mark.configure(bg=P["graphit"] if on else bg)
-            lbl.configure(bg=bg, fg=P["graphit"] if on else P["schiefer"], highlightbackground=bg)
-        if hasattr(self, "run_frame"):  # Einstellungen: eigene Fußleiste statt Start/Log
+            mark.configure(bg=P["graphite"] if on else bg)
+            lbl.configure(bg=bg, fg=P["graphite"] if on else P["slate"], highlightbackground=bg)
+        if hasattr(self, "run_frame"):  # settings: own footer instead of start/log
             if cur == 3:
                 self.run_frame.pack_forget()
             elif not self.run_frame.winfo_manager():
                 self.run_frame.pack(side="bottom", fill="x", before=self.nb)
         self._update_mode()
 
-    # --- Bausteine -------------------------------------------------------------
-    def _folder_row(self, parent, row, label, var, multi=False):
+    # --- Building blocks ----------------------------------------------------------------
+    def _folder_row(self, parent, row, label, var):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="nw", pady=(9, 4), padx=(0, 16))
         cell = ttk.Frame(parent)
         cell.grid(row=row, column=1, sticky="ew", pady=4)
@@ -317,19 +318,19 @@ class App:
         ttk.Entry(cell, textvariable=var, width=10).grid(row=0, column=0, sticky="ew")
         hint = ttk.Label(cell, style="Hint.TLabel")
         hint.grid(row=1, column=0, sticky="w", pady=(3, 0))
-        ttk.Button(parent, text="Wählen…", command=lambda: self._choose(var)).grid(
+        ttk.Button(parent, text=t("gui.choose"), command=lambda: self._choose(var)).grid(
             row=row, column=2, sticky="nw", padx=(8, 0), pady=4)
         self._drive_hint(var, hint)
 
     def _drive_hint(self, var: tk.StringVar, label: ttk.Label):
-        """Zeigt unter Pfaden auf /Volumes, ob das Laufwerk angeschlossen ist."""
+        """Shows below paths on /Volumes whether the drive is connected."""
         def update(*_):
             parts = Path(var.get().strip()).parts
             if len(parts) >= 3 and parts[1] == "Volumes":
                 if Path("/Volumes", parts[2]).is_dir():
-                    label.configure(text=f"Laufwerk „{parts[2]}“ ist angeschlossen", style="Hint.TLabel")
+                    label.configure(text=t("gui.drive_connected", drive=parts[2]), style="Hint.TLabel")
                 else:
-                    label.configure(text=f"Laufwerk „{parts[2]}“ ist nicht angeschlossen", style="Error.TLabel")
+                    label.configure(text=t("gui.drive_not_connected", drive=parts[2]), style="Error.TLabel")
                 label.grid()
             else:
                 label.grid_remove()
@@ -349,17 +350,17 @@ class App:
     def _label(self, parent, row, text, top=4):
         ttk.Label(parent, text=text).grid(row=row, column=0, sticky="w", pady=(top, 4), padx=(0, 16))
 
-    def _pattern_row(self, parent, row, label, var, values):
+    def _pattern_row(self, parent, row, label, var):
         self._label(parent, row, label)
-        cb = ttk.Combobox(parent, textvariable=var, values=values)
+        cb = ttk.Combobox(parent, textvariable=var, values=[localize(p) for p in self.cfg.get("patterns.presets")])
         cb.grid(row=row, column=1, sticky="ew", pady=4)
-        ttk.Button(parent, text="Platzhalter", command=self._show_placeholders).grid(
+        ttk.Button(parent, text=t("gui.placeholders"), command=self._show_placeholders).grid(
             row=row, column=2, sticky="w", padx=(8, 0))
         return cb
 
     def _show_placeholders(self):
-        messagebox.showinfo("Platzhalter", "Platzhalter für Muster (/ trennt Ordner):\n\n" +
-                            "\n".join(f"{{{k}}}  –  {v}" for k, v in PLACEHOLDERS.items()))
+        messagebox.showinfo(t("gui.placeholders"), t("gui.placeholders_intro") + "\n\n" +
+                            "\n".join(f"{{{t(f'ph.{p}')}}}  –  {t(f'ph_help.{p}')}" for p in PLACEHOLDERS))
 
     def _header(self, parent, title, desc="", **grid):
         ttk.Label(parent, text=title, style="H1.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", **grid)
@@ -376,11 +377,11 @@ class App:
         return f
 
     def _wheel(self, e, touchpad: bool):
-        """Mausrad/Trackpad: scrollt den ScrollPage-Bereich unter dem Mauszeiger.
-        Text- und Listenfelder scrollen selbst (eigene Tk-Bindung)."""
+        """Mouse wheel/trackpad: scrolls the ScrollPage area under the pointer.
+        Text and list fields scroll themselves (own Tk binding)."""
         try:
             w = self.root.winfo_containing(e.x_root, e.y_root)
-        except (KeyError, tk.TclError):  # z.B. Auswahlliste einer Combobox
+        except (KeyError, tk.TclError):  # e.g. the drop-down list of a combobox
             return
         while w is not None and not getattr(w, "scroll_page", False):
             if isinstance(w, (tk.Text, tk.Listbox)):
@@ -390,22 +391,22 @@ class App:
             return
         if touchpad:
             dy = int(self.root.tk.splitlist(self.root.tk.call("tk::PreciseScrollDeltas", e.delta))[1])
-            w.yview_scroll(-dy, "units")  # yscrollincrement=1 -> Pixel
-        else:  # Tk 9 meldet 120 je Raste, ältere Versionen kleine Werte
+            w.yview_scroll(-dy, "units")  # yscrollincrement=1 -> pixels
+        else:  # Tk 9 reports 120 per notch, older versions small values
             notches = e.delta / 120 if abs(e.delta) >= 120 else e.delta
             w.yview_scroll(int(-notches * 36) or (-1 if e.delta > 0 else 1), "units")
 
-    # --- Profile ---------------------------------------------------------------
+    # --- Profiles -------------------------------------------------------------------------
     def _build_profile_bar(self):
         bar = ttk.Frame(self.main, padding=(32, 14, 32, 0))
         bar.pack(fill="x")
-        ttk.Button(bar, text="Löschen", command=self._profile_delete).pack(side="right")
-        ttk.Button(bar, text="Speichern", command=self._profile_save).pack(side="right", padx=4)
-        ttk.Button(bar, text="Laden", command=self._profile_load).pack(side="right")
+        ttk.Button(bar, text=t("gui.delete"), command=self._profile_delete).pack(side="right")
+        ttk.Button(bar, text=t("gui.save"), command=self._profile_save).pack(side="right", padx=4)
+        ttk.Button(bar, text=t("gui.load"), command=self._profile_load).pack(side="right")
         self.profile_var = tk.StringVar()
         self.profile_cb = ttk.Combobox(bar, textvariable=self.profile_var, width=20, values=self.profiles.names())
         self.profile_cb.pack(side="right", padx=8)
-        ttk.Label(bar, text="Profil").pack(side="right")
+        ttk.Label(bar, text=t("gui.profile")).pack(side="right")
 
     def _current_job(self) -> str | None:
         idx = self.nb.index(self.nb.select())
@@ -415,114 +416,114 @@ class App:
         job = self._current_job()
         name = self.profile_var.get().strip()
         if not job:
-            messagebox.showinfo("Profil", "Bitte zuerst Abgleich, Duplikate oder Sortieren wählen.")
+            messagebox.showinfo(t("gui.profile"), t("gui.profile_pick_job"))
             return
         if not name:
-            messagebox.showinfo("Profil", "Bitte einen Profilnamen eingeben.")
+            messagebox.showinfo(t("gui.profile"), t("gui.profile_enter_name"))
             return
-        self.profiles.save(name, {"aufgabe": job, "parameter": params_to_dict(self._params(job))})
+        self.profiles.save(name, {"job": job, "params": params_to_dict(self._params(job))})
         self.profile_cb["values"] = self.profiles.names()
-        self.log(f"Profil gespeichert: {name}")
+        self.log(t("gui.profile_saved", name=name))
 
     def _profile_load(self):
         name = self.profile_var.get().strip()
         try:
             prof = self.profiles.load(name)
         except (OSError, json.JSONDecodeError):
-            messagebox.showerror("Profil", f"Profil nicht gefunden: {name}")
+            messagebox.showerror(t("gui.profile"), t("gui.profile_not_found", name=name))
             return
-        job = prof.get("aufgabe", "abgleich")
-        self._apply_params(job, prof.get("parameter", {}))
+        job = prof.get("job", "sync")
+        self._apply_params(job, prof.get("params", {}))
         self.nb.select(JOBS.index(job))
-        self.log(f"Profil geladen: {name}")
+        self.log(t("gui.profile_loaded", name=name))
 
     def _profile_delete(self):
         name = self.profile_var.get().strip()
-        if name and messagebox.askyesno("Profil löschen", f"Profil „{name}“ löschen?"):
+        if name and messagebox.askyesno(t("gui.profile_delete_title"), t("gui.profile_delete_ask", name=name)):
             self.profiles.delete(name)
             self.profile_cb["values"] = self.profiles.names()
             self.profile_var.set("")
 
-    # --- Abgleich ----------------------------------------------------------------
+    # --- Sync ------------------------------------------------------------------------------
     def _build_sync_tab(self):
-        f = self._tab("Abgleich", "Prüft, welche Dateien der Quellordner schon im Ziel liegen – per Inhalt, "
-                                  "unabhängig vom Namen – und kopiert fehlende.")
-        ttk.Label(f, text="Quellordner").grid(row=2, column=0, sticky="nw", pady=(4, 4), padx=(0, 16))
-        self.sync_sources = tk.Listbox(f, height=4, width=10, selectmode="extended", bg=P["weiss"], fg=P["graphit"],
-                                       relief="flat", highlightthickness=1, highlightbackground=P["linie"],
-                                       highlightcolor=P["probe"], selectbackground=P["probe"],
-                                       selectforeground=P["weiss"], activestyle="none")
+        f = self._tab(t("nav.sync"), t("gui.sync_desc"))
+        ttk.Label(f, text=t("gui.source_folders")).grid(row=2, column=0, sticky="nw", pady=(4, 4), padx=(0, 16))
+        self.sync_sources = tk.Listbox(f, height=4, width=10, selectmode="extended", bg=P["white"], fg=P["graphite"],
+                                       relief="flat", highlightthickness=1, highlightbackground=P["line"],
+                                       highlightcolor=P["dry"], selectbackground=P["dry"],
+                                       selectforeground=P["white"], activestyle="none")
         self.sync_sources.grid(row=2, column=1, sticky="nsew", pady=4)
         bf = ttk.Frame(f)
         bf.grid(row=2, column=2, sticky="n", padx=(8, 0), pady=4)
-        ttk.Button(bf, text="Hinzufügen…", command=self._add_source).pack(fill="x")
-        ttk.Button(bf, text="Entfernen", command=lambda: [self.sync_sources.delete(i) for i in
-                                                          reversed(self.sync_sources.curselection())]
+        ttk.Button(bf, text=t("gui.add"), command=self._add_source).pack(fill="x")
+        ttk.Button(bf, text=t("gui.remove"), command=lambda: [self.sync_sources.delete(i) for i in
+                                                              reversed(self.sync_sources.curselection())]
                    ).pack(fill="x", pady=4)
         self.sync_target = tk.StringVar()
-        self._folder_row(f, 3, "Zielordner", self.sync_target)
+        self._folder_row(f, 3, t("gui.target_folder"), self.sync_target)
         self.sync_copy = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="Fehlende Dateien ins Ziel kopieren (sonst nur Bericht)",
-                        variable=self.sync_copy).grid(row=4, column=1, sticky="w", pady=(16, 4))
-        self._label(f, 5, "Ablage im Ziel")
-        self.sync_ablage = ChoiceVar(f, CHOICES["abgleich.fehlende_ablage"], self.cfg.get("abgleich.fehlende_ablage"))
-        self.sync_ablage.widget.grid(row=5, column=1, sticky="w", pady=4)
-        self.sync_pattern = tk.StringVar(value=self.cfg.get("muster.standard"))
-        pattern_cb = self._pattern_row(f, 6, "Ordner-Muster", self.sync_pattern, self.cfg.get("muster.vorlagen"))
-        toggle = lambda *_: pattern_cb.configure(state="normal" if self.sync_ablage.get() == "muster" else "disabled")
-        self.sync_ablage.var.trace_add("write", toggle)
+        ttk.Checkbutton(f, text=t("gui.copy_missing"), variable=self.sync_copy).grid(
+            row=4, column=1, sticky="w", pady=(16, 4))
+        self._label(f, 5, t("gui.placement"))
+        self.sync_placement = ChoiceVar(f, CHOICES["sync.missing_placement"], self.cfg.get("sync.missing_placement"))
+        self.sync_placement.widget.grid(row=5, column=1, sticky="w", pady=4)
+        self.sync_pattern = tk.StringVar(value=localize(self.cfg.get("patterns.default")))
+        pattern_cb = self._pattern_row(f, 6, t("gui.folder_pattern"), self.sync_pattern)
+        toggle = lambda *_: pattern_cb.configure(  # noqa: E731
+            state="normal" if self.sync_placement.get() == "pattern" else "disabled")
+        self.sync_placement.var.trace_add("write", toggle)
         toggle()
-        self.sync_fname = tk.StringVar(value=self.cfg.get("muster.dateiname"))
-        self._label(f, 7, "Dateiname-Muster")
+        self.sync_fname = tk.StringVar(value=localize(self.cfg.get("patterns.filename")))
+        self._label(f, 7, t("gui.filename_pattern"))
         ttk.Entry(f, textvariable=self.sync_fname).grid(row=7, column=1, sticky="ew", pady=4)
-        ttk.Label(f, text="leer = Originalname", style="Hint.TLabel").grid(row=7, column=2, sticky="w", padx=(8, 0))
+        ttk.Label(f, text=t("gui.empty_original_name"), style="Hint.TLabel").grid(
+            row=7, column=2, sticky="w", padx=(8, 0))
 
     def _add_source(self):
         p = filedialog.askdirectory(initialdir=str(Path.home() / "Pictures"))
         if p and p not in self.sync_sources.get(0, "end"):
             self.sync_sources.insert("end", p)
 
-    # --- Duplikate ---------------------------------------------------------------
+    # --- Duplicates --------------------------------------------------------------------------
     def _build_dup_tab(self):
-        f = self._tab("Duplikate", "Findet inhaltsgleiche Dateien in einem Ordner und allen Unterordnern.")
+        f = self._tab(t("nav.duplicates"), t("gui.dup_desc"))
         self.dup_folder = tk.StringVar()
-        self._folder_row(f, 2, "Ordner", self.dup_folder)
-        self._label(f, 3, "Behalten wird", top=16)
-        self.dup_keep = ChoiceVar(f, CHOICES["duplikate.behalten"], self.cfg.get("duplikate.behalten"))
+        self._folder_row(f, 2, t("gui.folder"), self.dup_folder)
+        self._label(f, 3, t("gui.keep"), top=16)
+        self.dup_keep = ChoiceVar(f, CHOICES["duplicates.keep"], self.cfg.get("duplicates.keep"))
         self.dup_keep.widget.grid(row=3, column=1, sticky="w", pady=(16, 4))
-        self._label(f, 4, "Mit Duplikaten")
-        self.dup_action = ChoiceVar(f, CHOICES["duplikate.aktion"], self.cfg.get("duplikate.aktion"))
+        self._label(f, 4, t("gui.with_duplicates"))
+        self.dup_action = ChoiceVar(f, CHOICES["duplicates.action"], self.cfg.get("duplicates.action"))
         self.dup_action.widget.grid(row=4, column=1, sticky="w", pady=4)
-        self._label(f, 5, "Duplikat-Ordner")
-        self.dup_dir = tk.StringVar(value=self.cfg.get("duplikate.ordner"))
+        self._label(f, 5, t("gui.dup_folder"))
+        self.dup_dir = tk.StringVar(value=default_dup_folder(self.cfg))
         ttk.Entry(f, textvariable=self.dup_dir, width=30).grid(row=5, column=1, sticky="w", pady=4)
-        ttk.Label(f, text="Dateien in Foto-Bibliotheken (Apple Fotos, Lightroom) werden nie verschoben "
-                          "oder gelöscht – dort wird bevorzugt das Original behalten.",
-                  style="Hint.TLabel", wraplength=560).grid(row=6, column=1, columnspan=2, sticky="w", pady=(14, 0))
+        ttk.Label(f, text=t("gui.libraries_safe"), style="Hint.TLabel", wraplength=560).grid(
+            row=6, column=1, columnspan=2, sticky="w", pady=(14, 0))
 
-    # --- Sortieren ---------------------------------------------------------------
+    # --- Sort ----------------------------------------------------------------------------------
     def _build_sort_tab(self):
-        f = self._tab("Sortieren", "Legt Dateien anhand ihrer Metadaten – Aufnahmedatum, Kamera, Objektiv – "
-                                   "in eine neue Ordnerstruktur.")
+        f = self._tab(t("nav.sort"), t("gui.sort_desc"))
         self.sort_src = tk.StringVar()
-        self._folder_row(f, 2, "Quellordner", self.sort_src)
+        self._folder_row(f, 2, t("gui.source_folder"), self.sort_src)
         self.sort_dst = tk.StringVar()
-        self._folder_row(f, 3, "Zielordner", self.sort_dst)
-        self.sort_pattern = tk.StringVar(value=self.cfg.get("muster.standard"))
-        self._pattern_row(f, 4, "Ordner-Muster", self.sort_pattern, self.cfg.get("muster.vorlagen"))
-        self.sort_fname = tk.StringVar(value=self.cfg.get("muster.dateiname"))
-        self._label(f, 5, "Dateiname-Muster")
+        self._folder_row(f, 3, t("gui.target_folder"), self.sort_dst)
+        self.sort_pattern = tk.StringVar(value=localize(self.cfg.get("patterns.default")))
+        self._pattern_row(f, 4, t("gui.folder_pattern"), self.sort_pattern)
+        self.sort_fname = tk.StringVar(value=localize(self.cfg.get("patterns.filename")))
+        self._label(f, 5, t("gui.filename_pattern"))
         ttk.Entry(f, textvariable=self.sort_fname).grid(row=5, column=1, sticky="ew", pady=4)
-        ttk.Label(f, text="leer = Originalname", style="Hint.TLabel").grid(row=5, column=2, sticky="w", padx=(8, 0))
-        self._label(f, 6, "Dateien")
+        ttk.Label(f, text=t("gui.empty_original_name"), style="Hint.TLabel").grid(
+            row=5, column=2, sticky="w", padx=(8, 0))
+        self._label(f, 6, t("gui.files"))
         self.sort_mode = ChoiceVar(f, ["copy", "move"], "copy")
         self.sort_mode.widget.grid(row=6, column=1, sticky="w", pady=4)
-        # Beispiel-Pfad: zeigt live, wie das Muster aussieht
-        ex = tk.Frame(f, bg=P["seite"])
+        # Example path: shows live what the pattern looks like
+        ex = tk.Frame(f, bg=P["side"])
         ex.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(16, 0))
-        tk.Label(ex, text="So sieht es aus", font=self.fonts["small"], bg=P["seite"], fg=P["schiefer"]
+        tk.Label(ex, text=t("gui.example"), font=self.fonts["small"], bg=P["side"], fg=P["slate"]
                  ).pack(anchor="w", padx=12, pady=(8, 0))
-        self.sort_example = tk.Label(ex, font=self.fonts["mono"], bg=P["seite"], fg=P["graphit"], anchor="w",
+        self.sort_example = tk.Label(ex, font=self.fonts["mono"], bg=P["side"], fg=P["graphite"], anchor="w",
                                      justify="left", wraplength=540)
         self.sort_example.pack(fill="x", padx=12, pady=(2, 10))
         self.sort_pattern.trace_add("write", lambda *_: self._update_example())
@@ -530,38 +531,35 @@ class App:
         self._update_example()
 
     def _update_example(self):
-        from datetime import datetime
-        from .metadata import Meta
-        from .patterns import PatternRenderer
-        from .scan import FileEntry
-        e = FileEntry(Path("/Quelle/Urlaub/IMG_4711.CR3"), 0, 0, Path("/Quelle"))
+        e = FileEntry(Path("/Source/Holiday/IMG_4711.CR3"), 0, 0, Path("/Source"))
         m = Meta(datetime(2025, 8, 9, 14, 5, 59), "DateTimeOriginal", "Canon EOS R6m2", "Canon", "RF24-105mm F4 L IS USM")
         try:
             r = PatternRenderer(self.cfg)
             path = r.folder(self.sort_pattern.get(), e, m) / r.filename(self.sort_fname.get(), e, m)
-            self.sort_example.configure(text=f"IMG_4711.CR3  →  Ziel/{path}", fg=P["graphit"])
+            self.sort_example.configure(text=t("gui.example_line", path=str(path)), fg=P["graphite"])
         except (PatternError, KeyError, ValueError, IndexError) as err:
-            self.sort_example.configure(text=str(err).splitlines()[0], fg=P["fehler"])
+            self.sort_example.configure(text=str(err).splitlines()[0], fg=P["error"])
 
-    # --- Einstellungen (automatisch aus defaults.toml erzeugt) -------------------
+    # --- Settings (generated from defaults.toml) ----------------------------------------------
     def _build_settings_tab(self):
         outer = ttk.Frame(self.nb)
-        self.nb.add(outer, text="Einstellungen")
+        self.nb.add(outer, text=t("nav.settings"))
         top = ttk.Frame(outer, padding=(32, 16, 32, 6))
         top.pack(side="top", fill="x")
-        ttk.Label(top, text="Einstellungen", style="H1.TLabel").pack(anchor="w")
-        ttk.Label(top, text=f"Gespeichert in {self.cfg.user_file}", style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(top, text=t("nav.settings"), style="H1.TLabel").pack(anchor="w")
+        ttk.Label(top, text=t("gui.settings_saved_in", path=str(self.cfg.user_file)), style="Hint.TLabel"
+                  ).pack(anchor="w", pady=(2, 0))
 
-        # Fußleiste bleibt beim Scrollen sichtbar
+        # The footer stays visible while scrolling
         foot = ttk.Frame(outer, padding=(32, 12, 32, 16))
         foot.pack(side="bottom", fill="x")
-        tk.Frame(outer, bg=P["linie"], height=1).pack(side="bottom", fill="x")
-        ttk.Button(foot, text="Einstellungen speichern", style="Probe.TButton", command=self._settings_save
+        tk.Frame(outer, bg=P["line"], height=1).pack(side="bottom", fill="x")
+        ttk.Button(foot, text=t("gui.settings_save"), style="Dry.TButton", command=self._settings_save
                    ).pack(side="left")
-        ttk.Button(foot, text="Auf Standard zurücksetzen", command=self._settings_reset).pack(side="left", padx=8)
+        ttk.Button(foot, text=t("gui.settings_reset"), command=self._settings_reset).pack(side="left", padx=8)
         self.settings_status = ttk.Label(foot, style="Hint.TLabel")
         self.settings_status.pack(side="left", padx=8)
-        ttk.Button(foot, text="Config-Datei öffnen", command=lambda: (self.cfg.save(), open_path(self.cfg.user_file))
+        ttk.Button(foot, text=t("gui.open_config"), command=lambda: (self.cfg.save(), open_path(self.cfg.user_file))
                    ).pack(side="right")
 
         page = ScrollPage(outer, padding=(32, 4, 32, 24))
@@ -569,6 +567,10 @@ class App:
         self.settings_frame = page.body
         self.helps = parse_comments(DEFAULTS_FILE)
         self._fill_settings()
+
+    def _help(self, path: str) -> str:
+        """Help text in the app language: German texts come from the locale, English ones from defaults.toml."""
+        return catalog(language()).get(f"help.{path}") or self.helps.get(path, "")
 
     def _fill_settings(self):
         for w in self.settings_frame.winfo_children():
@@ -580,24 +582,27 @@ class App:
         for section, values in self.cfg.defaults.items():
             if not isinstance(values, dict):
                 continue
-            ttk.Label(f, text=SECTION_TITLES.get(section, section), style="H2.TLabel"
+            ttk.Label(f, text=t(f"section.{section}"), style="H2.TLabel"
                       ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(22, 6))
             row += 1
             for key, default in values.items():
                 path = f"{section}.{key}"
                 current = self.cfg.get(path, default)
-                ttk.Label(f, text=key.replace("_", " ")).grid(row=row, column=0, sticky="nw", padx=(0, 16), pady=(7, 3))
+                label = catalog(language()).get(f"setting.{path}") or key.replace("_", " ")
+                ttk.Label(f, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 16), pady=(7, 3))
                 getter, widget = self._setting_widget(f, path, default, current)
                 widget.grid(row=row, column=1, sticky="ew" if not isinstance(widget, ttk.Checkbutton) else "w",
                             pady=3)
                 self.setting_getters[path] = getter
                 row += 1
-                if help_text := self.helps.get(path):
+                if help_text := self._help(path):
                     ttk.Label(f, text=help_text, style="Hint.TLabel", wraplength=620
                               ).grid(row=row, column=1, sticky="w", pady=(0, 4))
                     row += 1
 
     def _setting_widget(self, parent, path, default, current):
+        if path in PATTERN_SETTINGS:
+            current = [localize(p) for p in current] if isinstance(current, list) else localize(current)
         if isinstance(default, bool):
             var = tk.BooleanVar(value=current)
             return var.get, ttk.Checkbutton(parent, variable=var)
@@ -612,22 +617,27 @@ class App:
                 try:
                     return typ(var.get().replace(",", "."))
                 except ValueError:
-                    raise ValueError(f"{path}: Zahl erwartet")
+                    raise ValueError(t("gui.number_expected", key=path))
             return get_num, ttk.Entry(parent, textvariable=var, width=12)
         if isinstance(default, str):
             var = tk.StringVar(value=current)
-            return var.get, ttk.Entry(parent, textvariable=var)
-        # Listen/Tabellen: als Text, eine Zeile pro Eintrag
+            get = (lambda var=var: canonical(var.get())) if path in PATTERN_SETTINGS else var.get
+            return get, ttk.Entry(parent, textvariable=var)
+        # Lists/tables: as text, one line per entry
         if isinstance(default, list) and (not default or not isinstance(default[0], dict)):
             text = "\n".join(map(str, current))
-            parse = lambda s: [l.strip() for l in s.splitlines() if l.strip()]
-        elif isinstance(default, list):  # Liste von Tabellen (Bibliotheken)
-            text = "\n".join(f"{d.get('endung', '')}: {', '.join(d.get('unterordner', []))}" for d in current)
-            parse = lambda s: [{"endung": a.strip(), "unterordner": [x.strip() for x in b.split(",") if x.strip()]}
-                               for a, _, b in (l.partition(":") for l in s.splitlines() if l.strip())]
-        else:  # dict (z.B. Kameranamen)
+            if path in PATTERN_SETTINGS:
+                parse = lambda s: [canonical(x.strip()) for x in s.splitlines() if x.strip()]  # noqa: E731
+            else:
+                parse = lambda s: [x.strip() for x in s.splitlines() if x.strip()]  # noqa: E731
+        elif isinstance(default, list):  # list of tables (libraries)
+            text = "\n".join(f"{d.get('extension', '')}: {', '.join(d.get('subfolders', []))}" for d in current)
+            parse = lambda s: [{"extension": a.strip(), "subfolders": [x.strip() for x in b.split(",") if x.strip()]}  # noqa: E731
+                               for a, _, b in (x.partition(":") for x in s.splitlines() if x.strip())]
+        else:  # dict (e.g. camera names)
             text = "\n".join(f"{k} = {v}" for k, v in current.items())
-            parse = lambda s: {a.strip(): b.strip() for a, _, b in (l.partition("=") for l in s.splitlines() if "=" in l)}
+            parse = lambda s: {a.strip(): b.strip() for a, _, b in  # noqa: E731
+                               (x.partition("=") for x in s.splitlines() if "=" in x)}
         box = text_box(parent, height=min(8, max(2, text.count("\n") + 2)), width=1, wrap="none", font=self.fonts["mono"])
         box.insert("1.0", text)
         return (lambda box=box, parse=parse: parse(box.get("1.0", "end"))), box
@@ -635,55 +645,56 @@ class App:
     def _settings_save(self):
         try:
             values = {p: g() for p, g in self.setting_getters.items()}
-            for p in ("muster.standard", "muster.dateiname"):
+            for p in ("patterns.default", "patterns.filename"):
                 if values.get(p):
                     validate(values[p])
-            for v in values.get("muster.vorlagen", []):
+            for v in values.get("patterns.presets", []):
                 validate(v)
         except (ValueError, PatternError) as e:
-            messagebox.showerror("Einstellungen", str(e))
+            messagebox.showerror(t("nav.settings"), str(e))
             return
+        old_language = self.cfg.get("ui.language")
         for p, v in values.items():
             self.cfg.set(p, v)
         self.cfg.save()
         self.cfg.reload()
-        self.log("Einstellungen gespeichert." + ("\n" + "\n".join(self.cfg.warnings) if self.cfg.warnings else ""))
-        self._settings_note("Gespeichert" + (" – mit Warnungen, siehe Log" if self.cfg.warnings else ""))
+        self.log(t("gui.settings_saved") + ("\n" + "\n".join(self.cfg.warnings) if self.cfg.warnings else ""))
+        self._settings_note(t("gui.saved") + (" – " + t("gui.with_warnings") if self.cfg.warnings else ""))
         self._update_example()
+        if self.cfg.get("ui.language") != old_language:
+            messagebox.showinfo(t("nav.settings"), t("gui.restart_for_language"))
 
     def _settings_reset(self):
-        if messagebox.askyesno("Zurücksetzen", "Alle Einstellungen auf Standard zurücksetzen?"):
+        if messagebox.askyesno(t("gui.reset_title"), t("gui.reset_ask")):
             self.cfg.reset()
             self._fill_settings()
-            self.log("Einstellungen zurückgesetzt.")
-            self._settings_note("Auf Standard zurückgesetzt")
+            self.log(t("gui.settings_reset_done"))
+            self._settings_note(t("gui.settings_reset_done"))
 
     def _settings_note(self, text: str):
-        import time
         self.settings_status.configure(text=f"{text} ({time.strftime('%H:%M')})")
 
-    # --- Verlauf / Rückgängig ----------------------------------------------------
+    # --- History / undo -------------------------------------------------------------------------
     def _build_history_tab(self):
         f = ttk.Frame(self.nb, padding=(32, 16, 32, 8))
         f.columnconfigure(0, weight=1)
         f.rowconfigure(2, weight=1)
-        self.nb.add(f, text="Verlauf")
-        self._header(f, "Verlauf", "Jeder echte Lauf wird protokolliert und kann rückgängig gemacht werden: "
-                                   "Kopien werden entfernt, Verschobenes zurückgelegt.")
-        self.hist = tk.Listbox(f, height=8, bg=P["weiss"], fg=P["graphit"], relief="flat", highlightthickness=1,
-                               highlightbackground=P["linie"], highlightcolor=P["probe"], activestyle="none",
-                               selectbackground=P["probe"], selectforeground=P["weiss"], font=self.fonts["mono"])
+        self.nb.add(f, text=t("nav.history"))
+        self._header(f, t("nav.history"), t("gui.history_desc"))
+        self.hist = tk.Listbox(f, height=8, bg=P["white"], fg=P["graphite"], relief="flat", highlightthickness=1,
+                               highlightbackground=P["line"], highlightcolor=P["dry"], activestyle="none",
+                               selectbackground=P["dry"], selectforeground=P["white"], font=self.fonts["mono"])
         self.hist.grid(row=2, column=0, sticky="nsew")
         hist_bar = ttk.Scrollbar(f, orient="vertical", command=self.hist.yview)
         hist_bar.grid(row=2, column=1, sticky="ns")
         self.hist.configure(yscrollcommand=hist_bar.set)
         bf = ttk.Frame(f)
         bf.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Button(bf, text="Rückgängig machen", command=self._hist_undo).pack(side="left")
-        ttk.Button(bf, text="Aktualisieren", command=self._hist_refresh).pack(side="left", padx=6)
-        ttk.Button(bf, text="Logdatei", command=lambda: open_path(self.cfg.data_dir / "logs" / "mediatidy.log")
+        ttk.Button(bf, text=t("gui.undo"), command=self._hist_undo).pack(side="left")
+        ttk.Button(bf, text=t("gui.refresh"), command=self._hist_refresh).pack(side="left", padx=6)
+        ttk.Button(bf, text=t("gui.log_file"), command=lambda: open_path(self.cfg.data_dir / "logs" / "mediatidy.log")
                    ).pack(side="right")
-        ttk.Button(bf, text="Berichte-Ordner", command=lambda: open_path(self.cfg.data_dir / "berichte")
+        ttk.Button(bf, text=t("gui.reports_folder"), command=lambda: open_path(self.cfg.data_dir / "reports")
                    ).pack(side="right", padx=6)
         self._hist_refresh()
 
@@ -691,36 +702,36 @@ class App:
         self.hist_files = list_journals(self.cfg.data_dir)
         self.hist.delete(0, "end")
         for p in self.hist_files:
-            n = sum(1 for e in read_entries(p) if e.get("aktion") not in ("lauf_rueckgaengig", "ordner_angelegt"))
-            self.hist.insert("end", f"  {p.stem}   ({n} Aktionen)")
+            n = sum(1 for e in read_entries(p) if e.get("action") not in ("run_undone", "folder_created"))
+            self.hist.insert("end", "  " + t("gui.history_line", name=p.stem, n=n))
         if not self.hist_files:
-            self.hist.insert("end", "  Noch keine echten Läufe – Probeläufe erscheinen hier nicht.")
+            self.hist.insert("end", "  " + t("gui.history_empty"))
 
     def _hist_undo(self):
         sel = self.hist.curselection()
         if not sel or sel[0] >= len(self.hist_files):
             return
         file = self.hist_files[sel[0]]
-        if "_RUECKGAENGIG" in file.name:
-            messagebox.showinfo("Rückgängig", "Dieser Lauf wurde schon rückgängig gemacht.")
+        if is_undone(file):
+            messagebox.showinfo(t("gui.undo"), t("gui.already_undone"))
             return
-        if not messagebox.askyesno("Rückgängig", f"Lauf „{file.stem}“ rückgängig machen?"):
+        if not messagebox.askyesno(t("gui.undo"), t("gui.undo_ask", name=file.stem)):
             return
 
         def work(ctx):
             done, problems = undo(file, ctx)
-            ctx.message(f"Rückgängig: {done} Dateien." + "".join(f"\n  ⚠️ {p}" for p in problems))
+            ctx.message(t("gui.undo_done", n=done) + "".join(f"\n  ⚠️ {p}" for p in problems))
             return None
         self._start(work)
 
-    # --- Unten: Modus, Start, Fortschritt, Log -------------------------------------
+    # --- Bottom: mode, start, progress, log -------------------------------------------------------
     def _build_bottom(self):
         f = ttk.Frame(self.main, padding=(32, 4, 32, 16))
         f.pack(side="bottom", fill="x")
         f.columnconfigure(0, weight=1)
         self.run_frame = f
 
-        # Modus-Leiste: blau = Probelauf, Bernstein = echter Lauf
+        # Mode bar: blue = dry run, amber = real run
         self.banner = tk.Frame(f)
         self.banner.grid(row=0, column=0, sticky="ew")
         self.banner_mark = tk.Frame(self.banner, width=5)
@@ -728,10 +739,10 @@ class App:
         inner = tk.Frame(self.banner)
         inner.pack(side="left", fill="both", expand=True, padx=16, pady=12)
         inner.columnconfigure(1, weight=1)
-        self.dry_var = tk.BooleanVar(value=self.cfg.get("aktionen.probelauf", True))
+        self.dry_var = tk.BooleanVar(value=self.cfg.get("actions.dry_run", True))
         modes = tk.Frame(inner)
         modes.grid(row=0, column=0, sticky="w")
-        for text, val in (("Probelauf", True), ("Echt ausführen", False)):
+        for text, val in ((t("gui.mode_dry"), True), (t("gui.mode_real"), False)):
             ttk.Radiobutton(modes, text=text, variable=self.dry_var, value=val, style="Mode.Toolbutton"
                             ).pack(side="left")
         info = tk.Frame(inner)
@@ -744,77 +755,78 @@ class App:
         btns = tk.Frame(inner)
         btns.grid(row=0, column=2, sticky="e")
         self.banner_parts.append(btns)
-        self.report_btn = ttk.Button(btns, text="Bericht öffnen", state="disabled", command=self._open_report)
+        self.report_btn = ttk.Button(btns, text=t("gui.open_report"), state="disabled", command=self._open_report)
         self.report_btn.pack(side="left")
-        self.cancel_btn = ttk.Button(btns, text="Abbrechen", state="disabled",
+        self.cancel_btn = ttk.Button(btns, text=t("gui.cancel"), state="disabled",
                                      command=lambda: self.ctx and self.ctx.cancel())
         self.cancel_btn.pack(side="left", padx=6)
-        self.start_btn = ttk.Button(btns, text="Start", command=self._run, style="Probe.TButton")
+        self.start_btn = ttk.Button(btns, text=t("gui.start"), command=self._run, style="Dry.TButton")
         self.start_btn.pack(side="left")
 
         self.prog = ttk.Progressbar(f, mode="determinate", style="Run.Horizontal.TProgressbar")
         self.prog.grid(row=1, column=0, sticky="ew", pady=(12, 2))
-        self.prog_label = ttk.Label(f, text="Bereit", style="Hint.TLabel")
+        self.prog_label = ttk.Label(f, text=t("gui.ready"), style="Hint.TLabel")
         self.prog_label.grid(row=2, column=0, sticky="w")
         self.logbox = text_box(f, height=5, width=1, wrap="word", font=self.fonts["mono"], state="disabled")
         self.logbox.grid(row=3, column=0, sticky="ew", pady=(6, 0))
-        self.logbox.tag_configure("fehler", foreground=P["fehler"])
-        self.logbox.tag_configure("kopf", font=(self.fonts["mono"][0], self.fonts["mono"][1], "bold"))
+        self.logbox.tag_configure("error", foreground=P["error"])
+        self.logbox.tag_configure("head", font=(self.fonts["mono"][0], self.fonts["mono"][1], "bold"))
 
         for var in (self.dry_var, self.sync_copy, self.dup_action.var, self.dup_dir, self.sort_mode.var):
             var.trace_add("write", lambda *_: self._update_mode())
 
     def _mode_info(self) -> tuple[str, str, str, str]:
-        """(Art, Knopftext, Titel, Erklärung) für den aktuellen Bereich und Modus."""
+        """(kind, button text, title, explanation) for the current page and mode."""
         job = self._current_job()
         if not job:
-            return "aus", "Start", "", ""
+            return "off", t("gui.start"), "", ""
         if self.dry_var.get():
-            return "probe", "Probelauf starten", "Probelauf", "Nichts wird verändert – nur Vorschau und Bericht."
-        if job == "abgleich" and not self.sync_copy.get() or job == "duplikate" and self.dup_action.get() == "bericht":
-            return "probe", "Bericht erstellen", "Nur Bericht", "Mit diesen Eingaben werden keine Dateien verändert."
-        undo_hint = " Rückgängig machen über „Verlauf“."
-        if job == "abgleich":
-            return "echt", "Fehlende kopieren", "Echter Lauf", "Fehlende Dateien werden ins Ziel kopiert." + undo_hint
-        if job == "duplikate":
-            if self.dup_action.get() == "papierkorb":
-                return "echt", "In Papierkorb legen", "Echter Lauf", "Duplikate werden in den Papierkorb gelegt."
-            return "echt", "Duplikate verschieben", "Echter Lauf", \
-                f"Duplikate werden in „{self.dup_dir.get() or '_Duplikate'}“ verschoben." + undo_hint
+            return "dry", t("gui.start_dry"), t("gui.mode_dry"), t("gui.dry_explain")
+        if job == "sync" and not self.sync_copy.get() or job == "duplicates" and self.dup_action.get() == "report":
+            return "dry", t("gui.create_report"), t("gui.report_only"), t("gui.report_only_explain")
+        undo_hint = " " + t("gui.undo_hint")
+        real = t("gui.real_run")
+        if job == "sync":
+            return "real", t("gui.copy_missing_button"), real, t("gui.sync_explain") + undo_hint
+        if job == "duplicates":
+            if self.dup_action.get() == "trash":
+                return "real", t("gui.trash_button"), real, t("gui.trash_explain")
+            return "real", t("gui.move_dups_button"), real, \
+                t("gui.move_dups_explain", folder=self.dup_dir.get() or default_dup_folder(self.cfg)) + undo_hint
         if self.sort_mode.get() == "move":
-            return "echt", "Verschieben", "Echter Lauf", "Dateien werden aus dem Quellordner verschoben." + undo_hint
-        return "echt", "Kopieren", "Echter Lauf", "Dateien werden sortiert ins Ziel kopiert." + undo_hint
+            return "real", t("gui.move_button"), real, t("gui.sort_move_explain") + undo_hint
+        return "real", t("gui.copy_button"), real, t("gui.sort_copy_explain") + undo_hint
 
     def _update_mode(self):
         if not hasattr(self, "banner"):
             return
         kind, button, title, text = self._mode_info()
-        if kind == "aus":
+        if kind == "off":
             self.banner.grid_remove()
             return
         self.banner.grid()
-        echt = kind == "echt"
-        accent, light = (P["echt"], P["echt_hell"]) if echt else (P["probe"], P["probe_hell"])
+        real = kind == "real"
+        accent, light = (P["real"], P["real_light"]) if real else (P["dry"], P["dry_light"])
         for w in self.banner_parts:
             w.configure(bg=light)
         self.banner_mark.configure(bg=accent)
-        self.banner_title.configure(text=title, fg=P["graphit"])
-        self.banner_text.configure(text=text, fg=P["graphit"])
+        self.banner_title.configure(text=title, fg=P["graphite"])
+        self.banner_text.configure(text=text, fg=P["graphite"])
         s = ttk.Style(self.root)
-        s.configure("Mode.Toolbutton", background=light, foreground=P["schiefer"], bordercolor=accent,
+        s.configure("Mode.Toolbutton", background=light, foreground=P["slate"], bordercolor=accent,
                     lightcolor=light, darkcolor=light)
-        on_fg = P["graphit"] if self.dry_var.get() is False else P["weiss"]
-        sel = P["echt"] if not self.dry_var.get() else P["probe"]
-        s.map("Mode.Toolbutton", background=[("selected", sel), ("active", P["weiss"])],
+        on_fg = P["graphite"] if self.dry_var.get() is False else P["white"]
+        sel = P["real"] if not self.dry_var.get() else P["dry"]
+        s.map("Mode.Toolbutton", background=[("selected", sel), ("active", P["white"])],
               lightcolor=[("selected", sel)], darkcolor=[("selected", sel)],
               foreground=[("selected", on_fg)])
         s.configure("Run.Horizontal.TProgressbar", background=accent, lightcolor=accent, darkcolor=accent)
-        self.start_btn.configure(text=button, style="Echt.TButton" if echt else "Probe.TButton")
+        self.start_btn.configure(text=button, style="Real.TButton" if real else "Dry.TButton")
 
     def log(self, text: str):
         self.logbox.configure(state="normal")
         for line in text.split("\n"):
-            tag = "fehler" if ("❌" in line or "⚠️" in line) else "kopf" if line.startswith("===") else ()
+            tag = "error" if ("❌" in line or "⚠️" in line) else "head" if line.startswith("===") else ()
             self.logbox.insert("end", line + "\n", tag)
         self.logbox.see("end")
         self.logbox.configure(state="disabled")
@@ -824,45 +836,46 @@ class App:
             html = [r for r in self.last_result.reports if r.suffix == ".html"]
             open_path((html or self.last_result.reports)[0])
 
-    # --- Parameter <-> Oberfläche ------------------------------------------------
+    # --- Parameters <-> UI ---------------------------------------------------------------------------
     def _params(self, job: str):
         dry = self.dry_var.get()
-        if job == "abgleich":
+        if job == "sync":
             return SyncParams(list(self.sync_sources.get(0, "end")), self.sync_target.get().strip(),
-                              self.sync_copy.get(), self.sync_ablage.get(), self.sync_pattern.get().strip(),
-                              self.sync_fname.get().strip(), dry)
-        if job == "duplikate":
+                              self.sync_copy.get(), self.sync_placement.get(), canonical(self.sync_pattern.get().strip()),
+                              canonical(self.sync_fname.get().strip()), dry)
+        if job == "duplicates":
             return DupParams(self.dup_folder.get().strip(), self.dup_keep.get(), self.dup_action.get(),
-                             self.dup_dir.get().strip() or "_Duplikate", dry)
-        return SortParams(self.sort_src.get().strip(), self.sort_dst.get().strip(), self.sort_pattern.get().strip(),
-                          self.sort_fname.get().strip(), self.sort_mode.get(), dry)
+                             self.dup_dir.get().strip() or default_dup_folder(self.cfg), dry)
+        return SortParams(self.sort_src.get().strip(), self.sort_dst.get().strip(),
+                          canonical(self.sort_pattern.get().strip()), canonical(self.sort_fname.get().strip()),
+                          self.sort_mode.get(), dry)
 
     def _apply_params(self, job: str, d: dict):
-        p = params_from_dict(job, {**params_to_dict(self._params(job)), **d})
-        if job == "abgleich":
+        p = params_from_dict(job, {**params_to_dict(self._params(job)), **legacy.params(job, d)})
+        if job == "sync":
             self.sync_sources.delete(0, "end")
-            for s in p.quellen:
+            for s in p.sources:
                 self.sync_sources.insert("end", s)
-            self.sync_target.set(p.ziel)
-            self.sync_copy.set(p.fehlende_kopieren)
-            self.sync_ablage.set(p.ablage)
-            self.sync_pattern.set(p.muster)
-            self.sync_fname.set(p.dateiname)
-        elif job == "duplikate":
-            self.dup_folder.set(p.ordner)
-            self.dup_keep.set(p.behalten)
-            self.dup_action.set(p.aktion)
-            self.dup_dir.set(p.duplikat_ordner)
+            self.sync_target.set(p.target)
+            self.sync_copy.set(p.copy_missing)
+            self.sync_placement.set(p.placement)
+            self.sync_pattern.set(localize(p.pattern))
+            self.sync_fname.set(localize(p.filename))
+        elif job == "duplicates":
+            self.dup_folder.set(p.folder)
+            self.dup_keep.set(p.keep)
+            self.dup_action.set(p.action)
+            self.dup_dir.set(p.dup_folder)
         else:
-            self.sort_src.set(p.quelle)
-            self.sort_dst.set(p.ziel)
-            self.sort_pattern.set(p.muster)
-            self.sort_fname.set(p.dateiname)
-            self.sort_mode.set(p.modus)
+            self.sort_src.set(p.source)
+            self.sort_dst.set(p.target)
+            self.sort_pattern.set(localize(p.pattern))
+            self.sort_fname.set(localize(p.filename))
+            self.sort_mode.set(p.mode)
 
     def _save_state(self):
         try:
-            state = {"tab": self.nb.index(self.nb.select()), "probelauf": self.dry_var.get(),
+            state = {"tab": self.nb.index(self.nb.select()), "dry_run": self.dry_var.get(),
                      **{j: params_to_dict(self._params(j)) for j in JOBS}}
             self.state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         except (OSError, tk.TclError):
@@ -872,7 +885,11 @@ class App:
         try:
             state = json.loads(self.state_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return
+            try:
+                old = self.state_file.with_name(legacy.LAST_INPUTS_FILE)
+                state = legacy.last_inputs(json.loads(old.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError):
+                return
         for j in JOBS:
             if j in state:
                 try:
@@ -884,63 +901,61 @@ class App:
         except (tk.TclError, ValueError):
             pass
 
-    # --- Ausführen ------------------------------------------------------------------
+    # --- Run ------------------------------------------------------------------------------------------
     def _validate(self, job: str, p) -> str | None:
-        if job == "abgleich":
-            if not p.quellen:
-                return "Bitte mindestens einen Quellordner hinzufügen."
-            if not p.ziel:
-                return "Bitte einen Zielordner wählen."
-            if p.ablage == "muster":
-                validate(p.muster)
-        elif job == "duplikate":
-            if not p.ordner:
-                return "Bitte einen Ordner wählen."
+        if job == "sync":
+            if not p.sources:
+                return t("gui.need_source")
+            if not p.target:
+                return t("gui.need_target")
+            if p.placement == "pattern":
+                validate(p.pattern)
+        elif job == "duplicates":
+            if not p.folder:
+                return t("gui.need_folder")
         else:
-            if not p.quelle or not p.ziel:
-                return "Bitte Quell- und Zielordner wählen."
-            validate(p.muster)
-        if p.__dict__.get("dateiname"):
-            validate(p.dateiname)
+            if not p.source or not p.target:
+                return t("gui.need_source_target")
+            validate(p.pattern)
+        if p.__dict__.get("filename"):
+            validate(p.filename)
         return None
 
     def _confirm(self, job: str, p) -> bool:
-        """Rückfragen vor verändernden Aktionen. Setzt p.bestaetigt."""
-        if p.probelauf:
+        """Ask before changing actions. Sets p.confirmed."""
+        if p.dry_run:
             return True
-        ask = self.cfg.get("aktionen.bestaetigen", True)
-        overwrite = self.cfg.get("aktionen.kollision") == "ueberschreiben"
+        ask = self.cfg.get("actions.confirm", True)
+        overwrite = self.cfg.get("actions.collision") == "overwrite"
         msgs, warnings = [], []
-        if job == "abgleich" and p.fehlende_kopieren:
-            msgs.append(f"Fehlende Dateien werden nach\n{p.ziel}\nkopiert.")
-        if job == "duplikate" and p.aktion == "verschieben":
-            msgs.append(f"Duplikate werden nach „{p.duplikat_ordner}“ verschoben.")
-        if job == "duplikate" and p.aktion == "papierkorb":
-            msgs.append("Duplikate werden in den Papierkorb gelegt.")
-        if job == "sortieren":
-            msgs.append(f"Dateien werden nach\n{p.ziel}\n{'VERSCHOBEN' if p.modus == 'move' else 'kopiert'}.")
-        if job == "duplikate" and p.aktion != "bericht" and self.cfg.get("vergleich.methode", "hash") != "hash":
-            warnings.append("ACHTUNG: Vergleich nur nach Name/Größe – verschiedene Bilder können als "
-                            "Duplikat gelten. Sicher ist nur die Methode „hash“.")
-        if overwrite and job != "duplikate":
-            warnings.append("ACHTUNG: Kollisionsstrategie „überschreiben“ ist aktiv.")
-        moving_from = p.quelle if job == "sortieren" and p.modus == "move" else (
-            p.ordner if job == "duplikate" and p.aktion != "bericht" else None)
+        if job == "sync" and p.copy_missing:
+            msgs.append(t("gui.confirm_sync", target=p.target))
+        if job == "duplicates" and p.action == "move":
+            msgs.append(t("gui.confirm_dup_move", folder=p.dup_folder))
+        if job == "duplicates" and p.action == "trash":
+            msgs.append(t("gui.confirm_dup_trash"))
+        if job == "sort":
+            msgs.append(t("gui.confirm_sort_move" if p.mode == "move" else "gui.confirm_sort_copy", target=p.target))
+        if job == "duplicates" and p.action != "report" and self.cfg.get("compare.method", "hash") != "hash":
+            warnings.append(t("gui.warn_unsafe_method"))
+        if overwrite and job != "duplicates":
+            warnings.append(t("gui.warn_overwrite"))
+        moving_from = p.source if job == "sort" and p.mode == "move" else (
+            p.folder if job == "duplicates" and p.action != "report" else None)
         if moving_from:
             cats = affected_catalogs(self.cfg, Path(moving_from))
             if cats:
-                warnings.append("Lightroom-Katalog betroffen – verschobene Dateien müssen dort neu verknüpft "
-                            "werden:\n" + "\n".join(cats))
+                warnings.append(t("gui.warn_lightroom") + "\n" + "\n".join(cats))
         if warnings or (msgs and ask):
-            if not messagebox.askyesno("Wirklich ausführen?", "\n\n".join(msgs + warnings) + "\n\nFortfahren?"):
+            if not messagebox.askyesno(t("gui.confirm_title"), "\n\n".join(msgs + warnings) + "\n\n" + t("gui.continue")):
                 return False
-        p.bestaetigt = True
+        p.confirmed = True
         return True
 
     def _run(self):
         job = self._current_job()
         if not job:
-            messagebox.showinfo("Start", "Bitte Abgleich, Duplikate oder Sortieren wählen.")
+            messagebox.showinfo(t("gui.start"), t("gui.profile_pick_job"))
             return
         p = self._params(job)
         try:
@@ -948,19 +963,19 @@ class App:
         except PatternError as e:
             err = str(e)
         if err:
-            messagebox.showwarning("Eingaben", err)
+            messagebox.showwarning(t("gui.inputs"), err)
             return
         if not self._confirm(job, p):
             return
         self._save_state()
-        self.log(f"\n=== {job.capitalize()} {'(Probelauf)' if p.probelauf else ''} ===")
+        self.log(f"\n=== {t(f'nav.{job}')} {'(' + t('gui.mode_dry') + ')' if p.dry_run else ''} ===")
         self._start(lambda ctx: run_job(self.cfg, ctx, job, p))
 
     def _start(self, work):
         if self.worker and self.worker.is_alive():
             return
         self.ctx = RunContext(on_message=lambda m: self.q.put(("msg", m)),
-                              on_progress=lambda ph, d, t: self.q.put(("prog", (ph, d, t))),
+                              on_progress=lambda ph, d, n: self.q.put(("prog", (ph, d, n))),
                               on_names=lambda todo: self._names_from_worker(todo))
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
@@ -970,45 +985,41 @@ class App:
             try:
                 self.q.put(("done", work(ctx)))
             except Cancelled:
-                self.q.put(("msg", "Abgebrochen."))
+                self.q.put(("msg", t("msg.cancelled")))
                 self.q.put(("done", None))
-            except (OSError, ValueError) as e:  # Zugriff fehlt, Ordner fehlt, Muster falsch
+            except (OSError, ValueError) as e:  # no access, folder missing, wrong pattern
                 self.q.put(("msg", f"❌ {e}"))
                 self.q.put(("alert", str(e)))
                 self.q.put(("done", None))
-            except Exception as e:  # noqa: BLE001 – alles anzeigen statt abstürzen
-                import logging
-                logging.getLogger("mediatidy").exception("Fehler im Lauf")
-                self.q.put(("msg", f"❌ Fehler: {e}"))
+            except Exception as e:  # noqa: BLE001 – show everything instead of crashing
+                logging.getLogger("mediatidy").exception("Error during run")
+                self.q.put(("msg", "❌ " + t("gui.error", error=str(e))))
                 self.q.put(("done", None))
 
         self.worker = threading.Thread(target=target, daemon=True)
         self.worker.start()
 
     def _names_from_worker(self, todo: dict) -> dict:
-        """Läuft im Arbeits-Thread: Dialog im Haupt-Thread öffnen und auf die Antwort warten."""
+        """Runs in the worker thread: open the dialog in the main thread and wait for the answer."""
         answer, ev = {}, threading.Event()
         self.q.put(("names", (todo, answer, ev)))
         while not ev.wait(0.2):
             self.ctx.check()
-        if answer["namen"] is None:
+        if answer["names"] is None:
             raise Declined()
-        return answer["namen"]
+        return answer["names"]
 
     def _names_dialog(self, todo: dict) -> dict | None:
-        """Neue Namen aus den Metadaten anzeigen; Rückgabe {Platzhalter: {Name in Datei: Zielname}} oder None."""
-        win = tk.Toplevel(self.root, bg=P["papier"], padx=20, pady=16)
-        win.title("Namen prüfen")
+        """Show new names from the metadata; returns {placeholder: {name in file: target name}} or None."""
+        win = tk.Toplevel(self.root, bg=P["paper"], padx=20, pady=16)
+        win.title(t("gui.names_title"))
         win.transient(self.root)
         win.columnconfigure(0, weight=1)
-        ttk.Label(win, text="Neue Namen aus den Metadaten", style="H2.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(win, style="Hint.TLabel", wraplength=560, justify="left",
-                  text="Diese Namen haben noch keine Zuordnung und werden so als Ordner-/Dateiname verwendet. "
-                       "Bei Bedarf rechts anpassen – gleicher Name = gleicher Ordner. Die Zuordnung wird "
-                       "gespeichert (Einstellungen → Metadaten) und nicht erneut abgefragt."
+        ttk.Label(win, text=t("gui.names_heading"), style="H2.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(win, style="Hint.TLabel", wraplength=560, justify="left", text=t("gui.names_explain")
                   ).grid(row=1, column=0, sticky="w", pady=(4, 12))
         rows = sum(len(v) for v in todo.values()) + len(todo)
-        canvas = tk.Canvas(win, bg=P["papier"], highlightthickness=0, height=min(420, 34 * rows + 30), width=600,
+        canvas = tk.Canvas(win, bg=P["paper"], highlightthickness=0, height=min(420, 34 * rows + 30), width=600,
                            yscrollincrement=1)
         canvas.scroll_page = True
         bar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
@@ -1023,9 +1034,10 @@ class App:
         entries: dict[str, dict[str, tk.StringVar]] = {}
         r = 0
         for ph, found in todo.items():
-            ttk.Label(grid, text=f"{{{ph}}}", font=self.fonts["bold"]).grid(row=r, column=0, sticky="w", pady=(8, 2))
-            ttk.Label(grid, text="Dateien", style="Hint.TLabel").grid(row=r, column=1, sticky="e", padx=8)
-            ttk.Label(grid, text="wird zu", style="Hint.TLabel").grid(row=r, column=2, sticky="w")
+            ttk.Label(grid, text=f"{{{t(f'ph.{ph}')}}}", font=self.fonts["bold"]).grid(
+                row=r, column=0, sticky="w", pady=(8, 2))
+            ttk.Label(grid, text=t("gui.files"), style="Hint.TLabel").grid(row=r, column=1, sticky="e", padx=8)
+            ttk.Label(grid, text=t("gui.becomes"), style="Hint.TLabel").grid(row=r, column=2, sticky="w")
             r += 1
             for raw, (proposal, n) in found.items():
                 ttk.Label(grid, text=raw, font=self.fonts["mono"]).grid(row=r, column=0, sticky="w", padx=(0, 8))
@@ -1037,22 +1049,22 @@ class App:
         result: dict = {}
 
         def accept():
-            result["namen"] = {ph: {raw: v.get().strip() or todo[ph][raw][0] for raw, v in names.items()}
+            result["names"] = {ph: {raw: v.get().strip() or todo[ph][raw][0] for raw, v in names.items()}
                                for ph, names in entries.items()}
             win.destroy()
 
         btns = ttk.Frame(win)
         btns.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
-        ttk.Button(btns, text="Abbrechen", command=win.destroy).pack(side="left", padx=(0, 8))
-        ttk.Button(btns, text="Übernehmen und fortfahren", style="Probe.TButton", command=accept).pack(side="left")
+        ttk.Button(btns, text=t("gui.cancel"), command=win.destroy).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text=t("gui.names_accept"), style="Dry.TButton", command=accept).pack(side="left")
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.grab_set()
         win.focus_set()
         self.root.wait_window(win)
-        if "namen" in result:  # Einstellungsseite zeigt sonst die alte Zuordnung und würde sie zurückschreiben
-            assign_names(self.cfg, [], result["namen"])  # der Lauf speichert sie anschließend
+        if "names" in result:  # otherwise the settings page shows the old mapping and would write it back
+            assign_names(self.cfg, [], result["names"])  # the run saves it afterwards
             self._fill_settings()
-        return result.get("namen")
+        return result.get("names")
 
     def _poll(self):
         try:
@@ -1062,18 +1074,19 @@ class App:
                     self.log(data)
                 elif kind == "prog":
                     phase, done, total = data
+                    label = t(f"phase.{phase}")
                     if total:
                         self.prog.configure(mode="determinate", maximum=total, value=done)
-                        self.prog_label.configure(text=f"{phase}: {done} / {total}{self._eta(phase, done, total)}")
+                        self.prog_label.configure(text=f"{label}: {done} / {total}{self._eta(phase, done, total)}")
                     else:
                         self.prog.configure(mode="indeterminate")
                         self.prog.step(5)
-                        self.prog_label.configure(text=f"{phase}: {done} Dateien")
+                        self.prog_label.configure(text=t("gui.progress_files", phase=label, n=done))
                 elif kind == "alert":
                     messagebox.showerror("MediaTidy", data)
                 elif kind == "names":
                     todo, answer, ev = data
-                    answer["namen"] = self._names_dialog(todo)
+                    answer["names"] = self._names_dialog(todo)
                     ev.set()
                 elif kind == "done":
                     self._finished(data)
@@ -1082,8 +1095,7 @@ class App:
         self.root.after(100, self._poll)
 
     def _eta(self, phase: str, done: int, total: int) -> str:
-        """Restzeit-Schätzung je Phase."""
-        import time
+        """Remaining time estimate per phase."""
         now = time.monotonic()
         if getattr(self, "_eta_phase", None) != phase or done < getattr(self, "_eta_done0", 0):
             self._eta_phase, self._eta_t0, self._eta_done0 = phase, now, done
@@ -1093,27 +1105,27 @@ class App:
             return ""
         rest = elapsed / step * (total - done)
         text = f"{rest / 60:.0f} min" if rest >= 90 else f"{rest:.0f} s"
-        return f"  –  noch ca. {text}"
+        return "  –  " + t("gui.eta", time=text)
 
     def _finished(self, res: JobResult | None):
         self.start_btn.configure(state="normal")
         self.cancel_btn.configure(state="disabled")
         self.prog.configure(mode="determinate", value=0)
-        self.prog_label.configure(text="Fertig")
+        self.prog_label.configure(text=t("gui.done"))
         self._hist_refresh()
         if res is None:
             return
         self.last_result = res
         if res.cancelled:
-            self.log("Abgebrochen – Teilbericht:")
-        self.log("\n".join(f"  {k}: {v}" for k, v in res.summary.items()))
+            self.log(t("gui.cancelled_partial"))
+        self.log("\n".join(f"  {k}: {v}" for k, v in summary_items(res)))
         for r in res.reports:
-            self.log(f"  Bericht: {r}")
+            self.log("  " + t("msg.report", path=str(r)))
         self.report_btn.configure(state="normal" if res.reports else "disabled")
 
     def _on_close(self):
         if self.worker and self.worker.is_alive():
-            if not messagebox.askyesno("Beenden", "Ein Lauf ist aktiv. Abbrechen und beenden?"):
+            if not messagebox.askyesno(t("gui.quit_title"), t("gui.quit_ask")):
                 return
             self.ctx.cancel()
         self._save_state()

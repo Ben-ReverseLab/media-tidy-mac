@@ -1,4 +1,4 @@
-"""Einstellungen: defaults.toml + ~/.mediatidy/config.toml, Profile, Migration."""
+"""Settings: defaults.toml + ~/.mediatidy/config.toml, profiles, migration."""
 from __future__ import annotations
 
 import copy
@@ -9,10 +9,13 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from . import legacy
+from .i18n import t
+
 log = logging.getLogger(__name__)
 
 DEFAULTS_FILE = Path(__file__).with_name("defaults.toml")
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 USER_DIR_DEFAULT = Path("~/.mediatidy").expanduser()
 
 
@@ -22,9 +25,9 @@ def load_defaults() -> dict:
 
 
 # --- Migration ---------------------------------------------------------------
-# Für jede neue Config-Version eine Funktion version -> version+1 eintragen.
+# One function per config version: version -> version + 1.
 MIGRATIONS: dict[int, Any] = {
-    # 1: lambda cfg: {..., "version": 2},
+    1: legacy.config_v1_to_v2,  # German setting names -> English
 }
 
 
@@ -33,16 +36,16 @@ def migrate(cfg: dict) -> dict:
     while version < CONFIG_VERSION:
         step = MIGRATIONS.get(version)
         if step is None:
-            log.warning("Keine Migration von Config-Version %s – Werte werden übernommen", version)
+            log.warning("No migration from config version %s – keeping values as they are", version)
             break
         cfg = step(cfg)
         version = int(cfg.get("version", version + 1))
-        log.info("Config migriert auf Version %s", version)
+        log.info("Config migrated to version %s", version)
     cfg["version"] = CONFIG_VERSION
     return cfg
 
 
-# --- Zusammenführen + Prüfen -------------------------------------------------
+# --- Merge + validate -------------------------------------------------------
 def _same_kind(default: Any, value: Any) -> bool:
     if isinstance(default, bool):
         return isinstance(value, bool)
@@ -52,13 +55,13 @@ def _same_kind(default: Any, value: Any) -> bool:
 
 
 def merge(defaults: dict, user: dict, path: str = "", warnings: list[str] | None = None) -> dict:
-    """Nutzerwerte über Standardwerte legen; falscher Typ -> Warnung + Standard."""
+    """Lay user values over the defaults; wrong type -> warning + default."""
     warnings = warnings if warnings is not None else []
     result = copy.deepcopy(defaults)
     for key, value in user.items():
         full = f"{path}.{key}" if path else key
         if key not in defaults:
-            # Unbekannte Schlüssel behalten (z.B. freie Tabellen wie kamera_namen, neuere Versionen)
+            # Keep unknown keys (free tables such as camera_names, newer versions)
             result[key] = value
             continue
         default = defaults[key]
@@ -67,12 +70,12 @@ def merge(defaults: dict, user: dict, path: str = "", warnings: list[str] | None
         elif _same_kind(default, value):
             result[key] = value
         else:
-            warnings.append(f"Ungültiger Wert für '{full}': {value!r} – Standard {default!r} wird verwendet")
+            warnings.append(t("config.invalid_value", key=full, value=repr(value), default=repr(default)))
     return result
 
 
 def diff(defaults: dict, cfg: dict) -> dict:
-    """Nur die vom Standard abweichenden Werte (für schlanke Nutzer-Config)."""
+    """Only the values that differ from the defaults (keeps the user config small)."""
     out: dict = {}
     for key, value in cfg.items():
         if key not in defaults:
@@ -86,7 +89,7 @@ def diff(defaults: dict, cfg: dict) -> dict:
     return out
 
 
-# --- TOML schreiben (tomllib kann nur lesen) ---------------------------------
+# --- Write TOML (tomllib can only read) ---------------------------------------
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -105,7 +108,7 @@ def _val(v: Any) -> str:
         return "[" + ", ".join(_val(x) for x in v) + "]"
     if isinstance(v, dict):
         return "{" + ", ".join(f"{_key(k)} = {_val(x)}" for k, x in v.items()) + "}"
-    raise TypeError(f"Nicht als TOML speicherbar: {v!r}")
+    raise TypeError(f"Cannot be stored as TOML: {v!r}")
 
 
 def dumps_toml(data: dict, prefix: str = "") -> str:
@@ -129,9 +132,9 @@ def dumps_toml(data: dict, prefix: str = "") -> str:
     return out.strip() + "\n"
 
 
-# --- Config-Objekt -----------------------------------------------------------
+# --- Config object -----------------------------------------------------------
 class Config:
-    """Zugriff per cfg["vergleich"]["methode"] oder cfg.get("vergleich.methode")."""
+    """Access via cfg["compare"]["method"] or cfg.get("compare.method")."""
 
     def __init__(self, user_dir: Path | None = None):
         self.defaults = load_defaults()
@@ -139,6 +142,8 @@ class Config:
         self.warnings: list[str] = []
         self.data = copy.deepcopy(self.defaults)
         self.reload()
+        if self.user_dir.exists():
+            legacy.migrate_data_dir(self.data_dir)
 
     @property
     def user_file(self) -> Path:
@@ -146,7 +151,7 @@ class Config:
 
     @property
     def data_dir(self) -> Path:
-        p = Path(self.get("pfade.datenordner") or self.user_dir).expanduser()
+        p = Path(self.get("paths.data_dir") or self.user_dir).expanduser()
         p.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -158,7 +163,7 @@ class Config:
                 with self.user_file.open("rb") as f:
                     user = tomllib.load(f)
             except (tomllib.TOMLDecodeError, OSError) as e:
-                self.warnings.append(f"Config {self.user_file} unlesbar ({e}) – Standardwerte aktiv")
+                self.warnings.append(t("config.unreadable", file=str(self.user_file), error=str(e)))
                 user = {}
         user = migrate(user)
         self.data = merge(self.defaults, user, warnings=self.warnings)
@@ -170,7 +175,7 @@ class Config:
         changed = diff(self.defaults, self.data)
         changed["version"] = CONFIG_VERSION
         tmp = self.user_file.with_suffix(".tmp")
-        tmp.write_text("# MediaTidy – eigene Einstellungen (nur Abweichungen vom Standard)\n"
+        tmp.write_text("# MediaTidy – your settings (only values that differ from the defaults)\n"
                        + dumps_toml(changed), encoding="utf-8")
         tmp.replace(self.user_file)
 
@@ -197,28 +202,29 @@ class Config:
         return self.data[key]
 
     def extensions(self, groups: list[str] | None = None) -> set[str]:
-        groups = groups if groups is not None else self.get("dateien.aktive_gruppen", [])
+        groups = groups if groups is not None else self.get("files.active_groups", [])
         exts: set[str] = set()
         for g in groups:
-            exts.update(e.lower().lstrip(".") for e in self.get(f"dateien.{g}", []))
+            exts.update(e.lower().lstrip(".") for e in self.get(f"files.{g}", []))
         return exts
 
-    def file_type(self, ext: str) -> str:
+    def file_group(self, ext: str) -> str:
+        """Group of an extension: raw | photo | video | sidecar | other."""
         ext = ext.lower().lstrip(".")
-        for g in ("raw", "foto", "video", "sidecar"):
-            if ext in self.get(f"dateien.{g}", []):
-                return {"raw": "RAW", "foto": "Foto", "video": "Video", "sidecar": "Sidecar"}[g]
-        return "Sonstige"
+        for g in ("raw", "photo", "video", "sidecar"):
+            if ext in self.get(f"files.{g}", []):
+                return g
+        return "other"
 
 
-# --- Profile (gespeicherte Aufträge) -----------------------------------------
+# --- Profiles (saved jobs) -----------------------------------------------------
 class Profiles:
     def __init__(self, cfg: Config):
-        self.dir = cfg.data_dir / "profile"
+        self.dir = cfg.data_dir / "profiles"
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def _file(self, name: str) -> Path:
-        safe = re.sub(r"[^\w\- äöüÄÖÜß→.]", "_", name).strip() or "profil"
+        safe = re.sub(r"[^\w\- →.]", "_", name).strip() or "profile"
         return self.dir / f"{safe}.json"
 
     def names(self) -> list[str]:
@@ -231,7 +237,7 @@ class Profiles:
         return out
 
     def load(self, name: str) -> dict:
-        return json.loads(self._file(name).read_text(encoding="utf-8"))
+        return legacy.profile(json.loads(self._file(name).read_text(encoding="utf-8")))
 
     def save(self, name: str, job: dict) -> None:
         data = {"name": name, "version": CONFIG_VERSION, **job}
