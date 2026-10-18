@@ -23,8 +23,8 @@ A macOS app for photographers: compare photos and videos between folders and dri
 
 ```sh
 brew install python-tk@3.14 exiftool          # Homebrew; any Python ≥ 3.11 with tkinter works
-git clone https://github.com/Ben-ReverseLab/FotoTool.git
-cd FotoTool
+git clone https://github.com/Ben-ReverseLab/media-tidy-mac.git
+cd media-tidy-mac
 app/build-app.sh                              # builds FotoTool.app (a small launcher, signed locally)
 python3 -m fototool pruefen                   # checks dependencies and drive access
 ```
