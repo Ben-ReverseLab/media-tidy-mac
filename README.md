@@ -1,82 +1,135 @@
 # FotoTool
 
-Fotos und Videos zwischen Ordnern/Festplatten abgleichen, Duplikate finden, nach Metadaten sortieren.
+A macOS app for photographers: compare photos and videos between folders and drives, find duplicates, and sort files into folders by their metadata (capture date, camera, lens …).
 
-## Einrichtung (einmalig)
+- **Content-based** – files are compared by checksum, not by name.
+- **Safe by default** – every run is a dry run unless you explicitly execute it; every real action is logged and can be undone.
+- **Library-aware** – reads the originals inside Apple Photos (`.photoslibrary`) and Lightroom (`.lrlibrary`) libraries without ever modifying them, and warns before moving files that a Lightroom Classic catalog uses.
+- **Sidecar-aware** – XMP/AAE sidecars travel with their photos and are kept up to date in backups.
+- **Configurable** – every option lives in one documented settings file and in the Settings page.
+
+> **Note:** The user interface, settings and command-line options are currently in **German**. This README translates the relevant terms.
+
+> **Warning:** FotoTool copies, moves and (if you choose) trashes files. Keep a backup of your photos, start with a dry run and read the report before executing. The software is provided without warranty (see [LICENSE](LICENSE)).
+
+## Requirements
+
+- macOS (uses Finder, `/Volumes`, AppleScript)
+- Python ≥ 3.11 with tkinter
+- [ExifTool](https://exiftool.org) (for date/camera/lens metadata)
+- No other Python packages
+
+## Installation
 
 ```sh
-sudo xcodebuild -license accept      # nur falls Homebrew danach fragt
-brew install python-tk@3.14 exiftool
+brew install python-tk@3.14 exiftool          # Homebrew; any Python ≥ 3.11 with tkinter works
+git clone https://github.com/Ben-ReverseLab/FotoTool.git
+cd FotoTool
+app/build-app.sh                              # builds FotoTool.app (a small launcher, signed locally)
+python3 -m fototool pruefen                   # checks dependencies and drive access
 ```
 
-Zugriffsrechte nur für FotoTool (nicht fürs Terminal):
-- Externe Festplatten: beim ersten Zugriff fragt macOS → „Erlauben“ (Wechseldatenträger)
-- Apple-Fotos-Mediathek: Systemeinstellungen → Datenschutz & Sicherheit → **Festplattenvollzugriff** → `+` → `~/FotoTool/FotoTool.app`
+If Homebrew asks for it, run `sudo xcodebuild -license accept` first.
 
-## Start
+### Permissions
 
-Doppelklick auf **`FotoTool.app`** → GUI. (Alternativ `FotoTool.command`, dann braucht aber das Terminal die Rechte.)
+macOS grants file access per app, so grant it to **FotoTool.app**, not to Terminal:
 
-App neu bauen (z.B. nach Änderung am Starter): `app/build-app.sh` – danach Freigabe ggf. neu setzen.
-Änderungen am Python-Code brauchen keinen Neubau.
+- **External drives:** macOS asks on first access → click “Allow” (removable volumes).
+- **Apple Photos library:** System Settings → Privacy & Security → **Full Disk Access** → `+` → select `FotoTool.app` from the cloned folder.
 
-Prüfen, ob alles bereit ist: `python3 -m fototool pruefen`
+After rebuilding the app (`app/build-app.sh`) you may have to grant Full Disk Access again.
 
-## Funktionen
+## Usage
 
-| Tab | Zweck |
+Double-click **`FotoTool.app`**. (`FotoTool.command` also works, but then Terminal needs the permissions.)
+
+Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/FotoTool.applescript`.
+
+### Pages
+
+| Page (German UI) | Purpose |
 |---|---|
-| 1 Abgleich | Mehrere Quellordner mit einem Ziel vergleichen (Inhalt, nicht Name). Fehlende kopieren – Struktur beibehalten oder nach Muster sortieren. Doppelte in den Quellen werden nur 1× kopiert. Sidecars (XMP/AAE) schon gesicherter Dateien werden ergänzt bzw. ersetzt, wenn die Quelle neuer ist (alte Version bleibt für Rückgängig erhalten). |
-| 2 Duplikate | Inhaltsgleiche Dateien in einem Ordner + Unterordnern. Behalten-Regel und Aktion (Bericht / in `_Duplikate` verschieben / Papierkorb) wählbar. Eine gemeinsame XMP (IMG.xmp neben IMG.CR3 + IMG.JPG) gehört immer zur RAW. |
-| 3 Sortieren | Nach Aufnahmedatum, Kamera, Objektiv, Typ … in Ordnerstruktur kopieren oder verschieben. Optional Umbenennen. |
-| Einstellungen | Alle Optionen (aus `defaults.toml` erzeugt, mit Erklärung). |
-| Verlauf | Jeder echte Lauf ist protokolliert und kann rückgängig gemacht werden. |
+| 1 Abgleich (*Sync*) | Compare several source folders with one target by content. Copy what is missing – keeping the folder structure or sorted by a pattern. Duplicates within the sources are copied only once. Sidecars (XMP/AAE) of already backed-up files are added, or replaced when the source is newer (the old version is kept for undo). |
+| 2 Duplikate (*Duplicates*) | Find files with identical content in a folder tree. Choose which copy to keep and what to do with the others: report only / move to `_Duplikate` / move to Trash. A shared XMP (`IMG.xmp` next to `IMG.CR3` and `IMG.JPG`) always belongs to the RAW file. |
+| 3 Sortieren (*Sort*) | Copy or move files into a folder structure by capture date, camera, lens, type …, optionally renaming them. |
+| Einstellungen (*Settings*) | All options, generated from `defaults.toml` with explanations. |
+| Verlauf (*History*) | Every real run is logged and can be undone. |
 
-- **Probelauf** ist standardmäßig an: zeigt nur, was passieren würde (Bericht als HTML/CSV).
-- **Leere Dateien** (0 Byte) werden als „vermutlich defekt“ gemeldet und weder verglichen noch kopiert.
-- **Profile**: Eingaben eines Tabs unter Namen speichern (z.B. „Pictures → Backup“) und später laden.
-- Bibliotheken (`.photoslibrary`, `.lrlibrary`) werden nur gelesen (Originale), nie verändert.
-- Vor dem Verschieben aus Ordnern, die ein Lightroom-Classic-Katalog nutzt, wird gewarnt.
-- Abgebrochene Läufe einfach neu starten: Bereits Kopiertes wird als vorhanden erkannt. Kopien werden erst unter Temp-Namen geschrieben und per Prüfsumme kontrolliert.
+- **Dry run** (*Probelauf*) is on by default: shows what would happen, as an HTML/CSV report.
+- **Empty files** (0 bytes) are reported as “probably damaged” and neither compared nor copied.
+- **Profiles**: save a page’s inputs under a name (e.g. “Pictures → Backup drive”) and load them later.
+- **Interrupted runs**: just start again – already copied files are recognised. Copies are written under a temporary name, verified by checksum and only then renamed.
 
-## Muster
+## Patterns
 
-`/` trennt Ordner. Platzhalter: `{Jahr} {Monat} {MonatName} {Tag} {Quartal} {KW} {KWJahr} {Wochentag} {Stunde} {Minute} {Sekunde} {Kamera} {Hersteller} {Objektiv} {Typ} {Endung} {Name} {Ordner} {Quelle}`
+`/` separates folders. Placeholders (German names):
 
-Beispiele: `{Jahr}/{Jahr}-{Monat}-{Tag}`, `{Kamera}/{Jahr}`, Dateiname `{Jahr}{Monat}{Tag}_{Stunde}{Minute}{Sekunde}_{Name}`
+| Placeholder | Meaning | Placeholder | Meaning |
+|---|---|---|---|
+| `{Jahr}` | year (2025) | `{Stunde}` | hour |
+| `{Monat}` | month, two digits (08) | `{Minute}` | minute |
+| `{MonatName}` | month name | `{Sekunde}` | second |
+| `{Tag}` | day, two digits | `{Kamera}` | camera model |
+| `{Quartal}` | quarter (Q3) | `{Hersteller}` | camera make |
+| `{KW}` | ISO week (KW32) | `{Objektiv}` | lens |
+| `{KWJahr}` | year of the ISO week | `{Typ}` | RAW / Foto / Video |
+| `{Wochentag}` | weekday | `{Endung}` | file extension |
+| `{Name}` | original file name | `{Ordner}` | current folder name |
+| `{Quelle}` | source folder name | | |
 
-**Namensprüfung:** Kommen `{Kamera}`, `{Hersteller}` oder `{Objektiv}` im Muster vor, zeigt FotoTool nach dem Lesen der Metadaten – vor jeder Änderung – alle Namen ohne Zuordnung (z.B. Drohne mit unterschiedlichen Modellnamen in Fotos und Videos). Namen anpassen oder übernehmen; die Zuordnung wird in Einstellungen → Metadaten (`kamera_namen`, `hersteller_namen`, `objektiv_namen`) gespeichert und nicht erneut abgefragt. Abschalten: `metadaten.namen_pruefen = false`.
+Examples: `{Jahr}/{Jahr}-{Monat}-{Tag}`, `{Kamera}/{Jahr}`, file name `{Jahr}{Monat}{Tag}_{Stunde}{Minute}{Sekunde}_{Name}`.
 
-## Kommandozeile (Automatisierung)
+Month names can be changed in Settings (`muster.monatsnamen`).
+
+**Name review:** if a pattern uses `{Kamera}`, `{Hersteller}` or `{Objektiv}`, FotoTool lists all names it has not seen before – after reading the metadata, before changing anything. Example: a drone that writes slightly different model names into its photos and videos. Rename or accept them; the mapping is saved in Settings → Metadaten (`kamera_namen`, `hersteller_namen`, `objektiv_namen`) and not asked again. Turn off with `metadaten.namen_pruefen = false`.
+
+## Command line
 
 ```sh
-cd ~/FotoTool
 python3 -m fototool abgleich --quelle ~/Pictures/2025 --quelle ~/Pictures/2026 --ziel /Volumes/Backup/Photos
 python3 -m fototool abgleich --profil "Pictures → Backup" --ausfuehren
 python3 -m fototool duplikate --ordner /Volumes/Backup/Photos --aktion verschieben --ausfuehren
-python3 -m fototool sortieren --quelle ~/Import --ziel ~/Sortiert --muster "{Jahr}/{Kamera}" --verschieben --ausfuehren
+python3 -m fototool sortieren --quelle ~/Import --ziel ~/Sorted --muster "{Jahr}/{Kamera}" --verschieben --ausfuehren
 python3 -m fototool rueckgaengig --ausfuehren
 ```
 
-Ohne `--ausfuehren` immer Probelauf. `--ja` bestätigt Papierkorb/Überschreiben.
-
-## Dateien
-
-| Pfad | Inhalt |
+| Command / option | Meaning |
 |---|---|
-| `fototool/defaults.toml` | Standardwerte mit Erklärungen – nicht ändern |
-| `~/.fototool/config.toml` | Eigene Einstellungen (nur Abweichungen) |
-| `~/.fototool/profile/` | Gespeicherte Profile |
-| `~/.fototool/journal/` | Protokoll jeder Aktion (für Rückgängig) |
-| `~/.fototool/berichte/` | Alle Berichte (echte Läufe zusätzlich als Kopie in `_FotoTool-Berichte` im Ziel) |
-| `~/.fototool/cache.db` | Prüfsummen-Cache (macht Wiederholungen schnell; löschbar) |
-| `~/.fototool/logs/` | Logdatei |
+| `abgleich` / `duplikate` / `sortieren` | sync / duplicates / sort |
+| `rueckgaengig` | undo the last run (`--datei` for a specific journal) |
+| `profile` | list saved profiles |
+| `pruefen` | check dependencies and drive access |
+| `--quelle`, `--ziel`, `--ordner` | source, target, folder |
+| `--muster`, `--dateiname` | folder pattern, file name pattern |
+| `--ablage struktur\|muster` | keep structure / sort by pattern (sync) |
+| `--behalten`, `--aktion` | which copy to keep / what to do with duplicates |
+| `--verschieben` | move instead of copy |
+| `--profil` | use a saved profile |
+| `--ausfuehren` | really execute (without it: always a dry run) |
+| `--ja` | confirm trashing/overwriting without asking |
+| `--config-dir` | use a different settings folder |
 
-## Erweitern
+## Files
 
-- Neue Einstellung: in `defaults.toml` mit Kommentar eintragen → erscheint automatisch im Einstellungen-Tab.
-- Inkompatible Config-Änderung: `CONFIG_VERSION` in `config.py` erhöhen und Funktion in `MIGRATIONS` eintragen.
-- Neue Bibliothek-Typen: Einstellungen → Durchsuchen → bibliotheken (`endung: unterordner`).
-- Tests: `python3 -m unittest discover -s tests` (schnell, vor jedem Commit)
-- Praxis-Prüfung mit echten, selbst erzeugten Fotos/Videos, Disk-Images und Finder-Papierkorb:
-  `python3 tests/praxis_pruefung.py` (3–5 Min., braucht exiftool + ffmpeg; nach größeren Änderungen)
+| Path | Contents |
+|---|---|
+| `fototool/defaults.toml` | Default settings with explanations – don’t edit |
+| `~/.fototool/config.toml` | Your settings (only values that differ from the defaults) |
+| `~/.fototool/profile/` | Saved profiles |
+| `~/.fototool/journal/` | Log of every action (for undo) |
+| `~/.fototool/berichte/` | All reports (real runs also put a copy into `_FotoTool-Berichte` in the target) |
+| `~/.fototool/cache.db` | Checksum cache (makes repeated runs fast; safe to delete) |
+| `~/.fototool/logs/` | Log files |
+
+## Development
+
+- Python standard library + tkinter only; external tools: exiftool (and Finder via `osascript`).
+- New setting: add it with a comment to `defaults.toml` → it appears automatically on the Settings page.
+- Incompatible config change: increase `CONFIG_VERSION` in `config.py` and add a function to `MIGRATIONS`.
+- Unit tests (under a second): `python3 -m unittest discover -s tests`
+- Real-world test with generated photos/videos and disk images: `python3 tests/praxis_pruefung.py` (3–5 min, needs exiftool and ffmpeg). **It moves test files into your real Finder Trash** and mounts temporary disk images.
+
+## License
+
+[MIT](LICENSE)
