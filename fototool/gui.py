@@ -53,6 +53,7 @@ P = {
     "probe": "#2D6784", "probe_dunkel": "#24546C", "probe_hell": "#E2ECF1",
     "echt": "#E39A2D", "echt_dunkel": "#CC8620", "echt_hell": "#FBEBD2",
     "fehler": "#B3261E",
+    "griff": "#868E96",  # Scrollbalken: deutlich vom Hintergrund abgesetzt
 }
 # Seitenleiste: (Titel, Index im Notebook); None = Abstand
 NAV = [("Abgleich", 0), ("Duplikate", 1), ("Sortieren", 2), None, ("Verlauf", 4), ("Einstellungen", 3)]
@@ -111,6 +112,37 @@ class ChoiceVar:
         self.var.set(LABELS.get(value, value))
 
 
+class ScrollPage:
+    """Senkrecht scrollbarer Bereich: Inhalt kommt in .body. Der Balken erscheint nur, wenn der Inhalt
+    nicht ganz passt. Mausrad/Trackpad leitet App._wheel an den Bereich unter dem Mauszeiger weiter."""
+
+    def __init__(self, parent, padding=0):
+        self.outer = ttk.Frame(parent)
+        self.outer.rowconfigure(0, weight=1)
+        self.outer.columnconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self.outer, highlightthickness=0, bg=P["papier"], yscrollincrement=1)
+        self.canvas.scroll_page = True
+        self.bar = ttk.Scrollbar(self.outer, orient="vertical", command=self.canvas.yview)
+        self.body = ttk.Frame(self.canvas, padding=padding)
+        self.win = self.canvas.create_window(0, 0, window=self.body, anchor="nw")
+        self.canvas.configure(yscrollcommand=self._set_bar)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.bar.grid(row=0, column=1, sticky="ns")
+        self.body.bind("<Configure>", self._sync)
+        self.canvas.bind("<Configure>", self._sync)
+
+    def _sync(self, _=None):
+        self.canvas.itemconfigure(self.win, width=self.canvas.winfo_width())
+        self.canvas.configure(scrollregion=(0, 0, self.body.winfo_reqwidth(), self.body.winfo_reqheight()))
+
+    def _set_bar(self, lo, hi):
+        self.bar.set(lo, hi)
+        if float(lo) <= 0.0 and float(hi) >= 1.0:
+            self.bar.grid_remove()
+        else:
+            self.bar.grid()
+
+
 class App:
     def __init__(self, root: tk.Tk, cfg: Config):
         self.root = root
@@ -155,6 +187,11 @@ class App:
         for i, (_, idx) in enumerate(n for n in NAV if n):
             root.bind(f"<Command-Key-{i + 1}>", lambda e, idx=idx: self.nb.select(idx))
         root.bind("<FocusIn>", lambda e: self._refresh_drives())
+        root.bind_all("<MouseWheel>", lambda e: self._wheel(e, touchpad=False))
+        try:
+            root.bind_all("<TouchpadScroll>", lambda e: self._wheel(e, touchpad=True))  # ab Tk 9
+        except tk.TclError:
+            pass
         self._load_state()
         self._page_changed()
         self.root.after(100, self._poll)
@@ -213,7 +250,14 @@ class App:
               indicatorbackground=[("selected", P["weiss"])])
         s.configure("Pages.TNotebook", borderwidth=0, tabmargins=0, padding=0)
         s.layout("Pages.TNotebook.Tab", [])  # Reiter ausblenden – Navigation über Seitenleiste
-        s.configure("Vertical.TScrollbar", background=P["seite"], bordercolor=P["papier"], arrowcolor=P["schiefer"])
+        # Scrollbalken ohne Pfeile, kräftiger Griff auf hellem Schacht
+        s.layout("Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+        s.configure("Vertical.TScrollbar", troughcolor=P["seite"], background=P["griff"], bordercolor=P["seite"],
+                    lightcolor=P["griff"], darkcolor=P["griff"], gripcount=0, arrowsize=5)  # Tk 9 skaliert: ergibt ~17 px
+        s.map("Vertical.TScrollbar", background=[("pressed", P["graphit"]), ("active", P["schiefer"])],
+              lightcolor=[("pressed", P["graphit"]), ("active", P["schiefer"])],
+              darkcolor=[("pressed", P["graphit"]), ("active", P["schiefer"])])
         s.configure("Run.Horizontal.TProgressbar", background=P["probe"], troughcolor=P["seite"],
                     bordercolor=P["seite"], lightcolor=P["probe"], darkcolor=P["probe"], thickness=6)
         s.configure("Mode.Toolbutton", padding=(12, 5), font=self.fonts["bold"])
@@ -257,6 +301,11 @@ class App:
             row.configure(bg=bg)
             mark.configure(bg=P["graphit"] if on else bg)
             lbl.configure(bg=bg, fg=P["graphit"] if on else P["schiefer"], highlightbackground=bg)
+        if hasattr(self, "run_frame"):  # Einstellungen: eigene Fußleiste statt Start/Log
+            if cur == 3:
+                self.run_frame.pack_forget()
+            elif not self.run_frame.winfo_manager():
+                self.run_frame.pack(side="bottom", fill="x", before=self.nb)
         self._update_mode()
 
     # --- Bausteine -------------------------------------------------------------
@@ -319,11 +368,32 @@ class App:
                 row=1, column=0, columnspan=3, sticky="w", pady=(2, 14), **grid)
 
     def _tab(self, title, desc):
-        f = ttk.Frame(self.nb, padding=(32, 16, 32, 8))
+        page = ScrollPage(self.nb, padding=(32, 16, 32, 16))
+        f = page.body
         f.columnconfigure(1, weight=1)
-        self.nb.add(f, text=title)
+        self.nb.add(page.outer, text=title)
         self._header(f, title, desc)
         return f
+
+    def _wheel(self, e, touchpad: bool):
+        """Mausrad/Trackpad: scrollt den ScrollPage-Bereich unter dem Mauszeiger.
+        Text- und Listenfelder scrollen selbst (eigene Tk-Bindung)."""
+        try:
+            w = self.root.winfo_containing(e.x_root, e.y_root)
+        except (KeyError, tk.TclError):  # z.B. Auswahlliste einer Combobox
+            return
+        while w is not None and not getattr(w, "scroll_page", False):
+            if isinstance(w, (tk.Text, tk.Listbox)):
+                return
+            w = w.master
+        if w is None:
+            return
+        if touchpad:
+            dy = int(self.root.tk.splitlist(self.root.tk.call("tk::PreciseScrollDeltas", e.delta))[1])
+            w.yview_scroll(-dy, "units")  # yscrollincrement=1 -> Pixel
+        else:  # Tk 9 meldet 120 je Raste, ältere Versionen kleine Werte
+            notches = e.delta / 120 if abs(e.delta) >= 120 else e.delta
+            w.yview_scroll(int(-notches * 36) or (-1 if e.delta > 0 else 1), "units")
 
     # --- Profile ---------------------------------------------------------------
     def _build_profile_bar(self):
@@ -477,30 +547,26 @@ class App:
     def _build_settings_tab(self):
         outer = ttk.Frame(self.nb)
         self.nb.add(outer, text="Einstellungen")
-        top = ttk.Frame(outer, padding=(32, 22, 32, 8))
-        top.pack(fill="x")
-        top.columnconfigure(0, weight=1)
-        ttk.Label(top, text="Einstellungen", style="H1.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(top, text=f"Gespeichert in {self.cfg.user_file}", style="Hint.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(2, 12))
-        bf = ttk.Frame(top)
-        bf.grid(row=2, column=0, sticky="w")
-        ttk.Button(bf, text="Speichern", command=self._settings_save).pack(side="left")
-        ttk.Button(bf, text="Auf Standard zurücksetzen", command=self._settings_reset).pack(side="left", padx=6)
-        ttk.Button(bf, text="Config-Datei öffnen", command=lambda: (self.cfg.save(), open_path(self.cfg.user_file))
-                   ).pack(side="left")
+        top = ttk.Frame(outer, padding=(32, 16, 32, 6))
+        top.pack(side="top", fill="x")
+        ttk.Label(top, text="Einstellungen", style="H1.TLabel").pack(anchor="w")
+        ttk.Label(top, text=f"Gespeichert in {self.cfg.user_file}", style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
 
-        canvas = tk.Canvas(outer, highlightthickness=0, bg=P["papier"])
-        sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        self.settings_frame = ttk.Frame(canvas, padding=(32, 4, 32, 24))
-        self.settings_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        win = canvas.create_window((0, 0), window=self.settings_frame, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
-        canvas.configure(yscrollcommand=sb.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta), "units")
-                        if self.nb.index(self.nb.select()) == 3 else None)
+        # Fußleiste bleibt beim Scrollen sichtbar
+        foot = ttk.Frame(outer, padding=(32, 12, 32, 16))
+        foot.pack(side="bottom", fill="x")
+        tk.Frame(outer, bg=P["linie"], height=1).pack(side="bottom", fill="x")
+        ttk.Button(foot, text="Einstellungen speichern", style="Probe.TButton", command=self._settings_save
+                   ).pack(side="left")
+        ttk.Button(foot, text="Auf Standard zurücksetzen", command=self._settings_reset).pack(side="left", padx=8)
+        self.settings_status = ttk.Label(foot, style="Hint.TLabel")
+        self.settings_status.pack(side="left", padx=8)
+        ttk.Button(foot, text="Config-Datei öffnen", command=lambda: (self.cfg.save(), open_path(self.cfg.user_file))
+                   ).pack(side="right")
+
+        page = ScrollPage(outer, padding=(32, 4, 32, 24))
+        page.outer.pack(side="top", fill="both", expand=True)
+        self.settings_frame = page.body
         self.helps = parse_comments(DEFAULTS_FILE)
         self._fill_settings()
 
@@ -582,6 +648,7 @@ class App:
         self.cfg.save()
         self.cfg.reload()
         self.log("Einstellungen gespeichert." + ("\n" + "\n".join(self.cfg.warnings) if self.cfg.warnings else ""))
+        self._settings_note("Gespeichert" + (" – mit Warnungen, siehe Log" if self.cfg.warnings else ""))
         self._update_example()
 
     def _settings_reset(self):
@@ -589,6 +656,11 @@ class App:
             self.cfg.reset()
             self._fill_settings()
             self.log("Einstellungen zurückgesetzt.")
+            self._settings_note("Auf Standard zurückgesetzt")
+
+    def _settings_note(self, text: str):
+        import time
+        self.settings_status.configure(text=f"{text} ({time.strftime('%H:%M')})")
 
     # --- Verlauf / Rückgängig ----------------------------------------------------
     def _build_history_tab(self):
@@ -598,12 +670,15 @@ class App:
         self.nb.add(f, text="Verlauf")
         self._header(f, "Verlauf", "Jeder echte Lauf wird protokolliert und kann rückgängig gemacht werden: "
                                    "Kopien werden entfernt, Verschobenes zurückgelegt.")
-        self.hist = tk.Listbox(f, height=14, bg=P["weiss"], fg=P["graphit"], relief="flat", highlightthickness=1,
+        self.hist = tk.Listbox(f, height=8, bg=P["weiss"], fg=P["graphit"], relief="flat", highlightthickness=1,
                                highlightbackground=P["linie"], highlightcolor=P["probe"], activestyle="none",
                                selectbackground=P["probe"], selectforeground=P["weiss"], font=self.fonts["mono"])
         self.hist.grid(row=2, column=0, sticky="nsew")
+        hist_bar = ttk.Scrollbar(f, orient="vertical", command=self.hist.yview)
+        hist_bar.grid(row=2, column=1, sticky="ns")
+        self.hist.configure(yscrollcommand=hist_bar.set)
         bf = ttk.Frame(f)
-        bf.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        bf.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Button(bf, text="Rückgängig machen", command=self._hist_undo).pack(side="left")
         ttk.Button(bf, text="Aktualisieren", command=self._hist_refresh).pack(side="left", padx=6)
         ttk.Button(bf, text="Logdatei", command=lambda: open_path(self.cfg.data_dir / "logs" / "fototool.log")
@@ -933,7 +1008,9 @@ class App:
                        "gespeichert (Einstellungen → Metadaten) und nicht erneut abgefragt."
                   ).grid(row=1, column=0, sticky="w", pady=(4, 12))
         rows = sum(len(v) for v in todo.values()) + len(todo)
-        canvas = tk.Canvas(win, bg=P["papier"], highlightthickness=0, height=min(420, 34 * rows + 30), width=600)
+        canvas = tk.Canvas(win, bg=P["papier"], highlightthickness=0, height=min(420, 34 * rows + 30), width=600,
+                           yscrollincrement=1)
+        canvas.scroll_page = True
         bar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
         canvas.grid(row=2, column=0, sticky="nsew")
