@@ -14,7 +14,7 @@ from .hashing import HashCache, Hasher, group_by_key
 from .journal import Journal
 from .metadata import Meta, MetadataReader
 from .patterns import PatternRenderer, validate
-from .report import report_dir, write_report
+from .report import report_dirs, write_report
 from .scan import FileEntry, Scanner
 
 STATUS_TEXT = {
@@ -251,7 +251,7 @@ class Job:
             res.summary["Lese-/Schreibfehler"] = len(res.errors)
             res.rows += [{"Status": "Fehler", "Datei": e} for e in res.errors]
         res.summary["Probelauf"] = "ja" if dry_run else "nein"
-        res.reports = write_report(self.cfg, report_dir(self.cfg, target, dry_run), self.name,
+        res.reports = write_report(self.cfg, report_dirs(self.cfg, target, dry_run), self.name,
                                    res.title, res.summary, columns, res.rows, dry_run)
         return res
 

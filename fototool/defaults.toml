@@ -139,7 +139,7 @@ aktion = "bericht"
 ordner = "_Duplikate"
 
 [berichte]
-# Ordner für Berichte; leer = "_FotoTool-Berichte" im Zielordner
+# Ordner für Berichte; leer = Datenordner/berichte, bei echten Läufen zusätzlich Kopie in "_FotoTool-Berichte" im Zielordner
 ordner = ""
 csv = true
 html = true

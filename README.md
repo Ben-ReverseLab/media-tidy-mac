@@ -66,7 +66,7 @@ Ohne `--ausfuehren` immer Probelauf. `--ja` bestätigt Papierkorb/Überschreiben
 | `~/.fototool/config.toml` | Eigene Einstellungen (nur Abweichungen) |
 | `~/.fototool/profile/` | Gespeicherte Profile |
 | `~/.fototool/journal/` | Protokoll jeder Aktion (für Rückgängig) |
-| `~/.fototool/berichte/` | Berichte von Probeläufen (echte Läufe: `_FotoTool-Berichte` im Ziel) |
+| `~/.fototool/berichte/` | Alle Berichte (echte Läufe zusätzlich als Kopie in `_FotoTool-Berichte` im Ziel) |
 | `~/.fototool/cache.db` | Prüfsummen-Cache (macht Wiederholungen schnell; löschbar) |
 | `~/.fototool/logs/` | Logdatei |
 

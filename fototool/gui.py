@@ -81,7 +81,9 @@ def parse_comments(file: Path) -> dict[str, str]:
 
 
 def open_path(p: Path) -> None:
-    subprocess.run(["open", str(p)], check=False)
+    r = subprocess.run(["open", str(p)], check=False, capture_output=True, text=True)
+    if r.returncode:
+        messagebox.showerror("Öffnen fehlgeschlagen", f"{p}\n\n{r.stderr.strip()}")
 
 
 def text_box(parent, **kw) -> tk.Text:

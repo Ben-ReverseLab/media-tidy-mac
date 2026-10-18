@@ -446,6 +446,14 @@ class KleineBefundeTests(Base):
         self.assertEqual(res.summary["Fehlen im Ziel"], 0)
         self.assertEqual(sorted(p.name for p in z.rglob("*.jpg")), ["nur_neu.jpg", "x-kopie.jpg", "x.jpg"])
 
+    def test_real_run_report_local_plus_copy_in_target(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "x.jpg", b"x" * 100)
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertEqual(res.reports[0].parent, self.cfg.data_dir / "berichte")  # wird geöffnet
+        self.assertEqual({p.parent for p in res.reports}, {self.cfg.data_dir / "berichte", dst / "_FotoTool-Berichte"})
+        self.assertEqual(len(res.reports), 4)
+
     def test_undo_removes_created_folders_only(self):
         src, dst = self.tmp / "src", self.tmp / "dst"
         write(src / "a" / "b" / "x.jpg", b"x" * 100)

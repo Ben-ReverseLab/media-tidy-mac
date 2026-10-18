@@ -3,26 +3,32 @@ from __future__ import annotations
 
 import csv
 import html
+import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 
 from .config import Config
 
+log = logging.getLogger("fototool")
 
-def report_dir(cfg: Config, target: Path | None, dry_run: bool) -> Path:
+
+def report_dirs(cfg: Config, target: Path | None, dry_run: bool) -> list[Path]:
+    """Erster Ordner ist lokal: Browser dürfen externe Laufwerke oft nicht lesen, der Bericht muss aber
+    immer zu öffnen sein. Echte Läufe legen zusätzlich eine Kopie in <ziel>/_FotoTool-Berichte ab."""
     custom = (cfg.get("berichte.ordner") or "").strip()
     if custom:
-        d = Path(custom).expanduser()
-    elif dry_run or target is None:
-        d = cfg.data_dir / "berichte"  # Probelauf verändert den Zielordner nicht
-    else:
-        d = target / "_FotoTool-Berichte"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+        return [Path(custom).expanduser()]
+    dirs = [cfg.data_dir / "berichte"]
+    if not dry_run and target is not None:  # Probelauf verändert den Zielordner nicht
+        dirs.append(target / "_FotoTool-Berichte")
+    return dirs
 
 
-def write_report(cfg: Config, directory: Path, job: str, title: str, summary: dict[str, object],
+def write_report(cfg: Config, directories: list[Path], job: str, title: str, summary: dict[str, object],
                  columns: list[str], rows: list[dict], dry_run: bool) -> list[Path]:
+    directory, *copies = directories
+    directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     name = f"{stamp}_{job}{'_PROBELAUF' if dry_run else ''}"
     base, n = directory / name, 2
@@ -63,4 +69,11 @@ tbody tr:nth-child(even){{background:#262626}} .dry{{background:#5c4b14}}}}
 {body}
 </tbody></table></html>""", encoding="utf-8")
         written.append(p)
+    local = list(written)
+    for d in copies:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            written += [Path(shutil.copy2(p, d)) for p in local]
+        except OSError as e:
+            log.warning("Berichtskopie nach %s fehlgeschlagen: %s", d, e)
     return written
