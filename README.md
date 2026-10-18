@@ -41,7 +41,7 @@ Prüfen, ob alles bereit ist: `python3 -m fototool pruefen`
 
 ## Muster
 
-`/` trennt Ordner. Platzhalter: `{Jahr} {Monat} {MonatName} {Tag} {Quartal} {KW} {Wochentag} {Stunde} {Minute} {Sekunde} {Kamera} {Hersteller} {Objektiv} {Typ} {Endung} {Name} {Ordner} {Quelle}`
+`/` trennt Ordner. Platzhalter: `{Jahr} {Monat} {MonatName} {Tag} {Quartal} {KW} {KWJahr} {Wochentag} {Stunde} {Minute} {Sekunde} {Kamera} {Hersteller} {Objektiv} {Typ} {Endung} {Name} {Ordner} {Quelle}`
 
 Beispiele: `{Jahr}/{Jahr}-{Monat}-{Tag}`, `{Kamera}/{Jahr}`, Dateiname `{Jahr}{Monat}{Tag}_{Stunde}{Minute}{Sekunde}_{Name}`
 
