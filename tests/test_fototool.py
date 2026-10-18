@@ -446,6 +446,20 @@ class KleineBefundeTests(Base):
         self.assertEqual(res.summary["Fehlen im Ziel"], 0)
         self.assertEqual(sorted(p.name for p in z.rglob("*.jpg")), ["nur_neu.jpg", "x-kopie.jpg", "x.jpg"])
 
+    def test_sync_adds_into_existing_folder(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "a" / "neu.jpg", b"n" * 100)
+        write(dst / "src" / "a" / "alt.jpg", b"a" * 100)
+        write(dst / "src" / "a" / "notiz.txt", b"hand")
+        old = (dst / "src" / "a" / "alt.jpg").stat()
+        res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
+        self.assertTrue((dst / "src" / "a" / "neu.jpg").exists())
+        self.assertEqual((dst / "src" / "a" / "alt.jpg").stat().st_mtime_ns, old.st_mtime_ns)
+        self.assertTrue((dst / "src" / "a" / "notiz.txt").exists())
+        self.assertNotIn("ordner_angelegt", Path(res.journal).read_text())  # Ordner bestand schon
+        undo(res.journal, self.ctx)
+        self.assertEqual(sorted(p.name for p in (dst / "src" / "a").iterdir()), ["alt.jpg", "notiz.txt"])
+
     def test_real_run_report_local_plus_copy_in_target(self):
         src, dst = self.tmp / "src", self.tmp / "dst"
         write(src / "x.jpg", b"x" * 100)
