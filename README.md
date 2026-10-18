@@ -1,5 +1,7 @@
 # MediaTidy
 
+[![Tests](https://github.com/Ben-ReverseLab/media-tidy-mac/actions/workflows/tests.yml/badge.svg)](https://github.com/Ben-ReverseLab/media-tidy-mac/actions/workflows/tests.yml)
+
 A macOS app for photographers: compare photos and videos between folders and drives, find duplicates, and sort files into folders by their metadata (capture date, camera, lens …).
 
 - **Content-based** – files are compared by checksum, not by name.
@@ -125,7 +127,7 @@ Settings, profiles and journals written by earlier versions (German names) are c
 - Code, comments and data formats are English; user-facing texts live in `mediatidy/locales/*.toml` (same keys in every language, checked by a test).
 - New setting: add it with a comment to `defaults.toml` → it appears automatically on the Settings page (English help = the comment; German label/help: `setting.<key>` / `help.<key>` in `de.toml`).
 - Incompatible config change: increase `CONFIG_VERSION` in `config.py` and add a function to `MIGRATIONS`.
-- Unit tests (about a second): `python3 -m unittest discover -s tests`
+- Unit tests (about a second): `python3 -m unittest discover -s tests` – GitHub Actions runs them on every push (`.github/workflows/tests.yml`).
 - Real-world check with generated photos/videos and disk images: `python3 tests/real_world_check.py` (3–5 min, needs exiftool and ffmpeg). **It moves test files into your real Finder Trash** and mounts temporary disk images.
 
 ## License
