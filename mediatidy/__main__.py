@@ -1,4 +1,4 @@
-"""Kommandozeile: python3 -m fototool <befehl> …  (ohne Befehl startet die GUI)."""
+"""Kommandozeile: python3 -m mediatidy <befehl> …  (ohne Befehl startet die GUI)."""
 from __future__ import annotations
 
 import argparse
@@ -31,9 +31,9 @@ def _ctx() -> RunContext:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="fototool", description="Fotos abgleichen, Duplikate finden, sortieren")
+    ap = argparse.ArgumentParser(prog="mediatidy", description="Fotos abgleichen, Duplikate finden, sortieren")
     ap.add_argument("--version", action="version", version=__version__)
-    ap.add_argument("--config-dir", help="anderer Einstellungsordner (Standard ~/.fototool)")
+    ap.add_argument("--config-dir", help="anderer Einstellungsordner (Standard ~/.mediatidy)")
     ap.add_argument("--ausfuehren", action="store_true", help="wirklich ausführen (Standard: Probelauf)")
     ap.add_argument("--ja", action="store_true", help="Rückfragen (Papierkorb/Überschreiben) bestätigen")
     sub = ap.add_subparsers(dest="cmd")

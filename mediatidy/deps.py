@@ -15,7 +15,7 @@ from .metadata import find_exiftool
 def setup_logging(cfg: Config) -> Path:
     log_dir = cfg.data_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    file = log_dir / "fototool.log"
+    file = log_dir / "mediatidy.log"
     handler = logging.handlers.RotatingFileHandler(file, maxBytes=2_000_000, backupCount=5, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root = logging.getLogger()
@@ -39,8 +39,8 @@ def check(cfg: Config) -> list[str]:
     if blocked:
         hints.append(f"Kein Zugriff auf: {', '.join(blocked)}.\n"
                      "  Systemeinstellungen → Datenschutz & Sicherheit → Festplattenvollzugriff:\n"
-                     "  FotoTool.app hinzufügen (bzw. Terminal, falls über FotoTool.command gestartet),\n"
-                     "  dann FotoTool neu starten. Für externe Platten reicht meist „Wechseldatenträger“ erlauben.")
+                     "  MediaTidy.app hinzufügen (bzw. Terminal, falls über MediaTidy.command gestartet),\n"
+                     "  dann MediaTidy neu starten. Für externe Platten reicht meist „Wechseldatenträger“ erlauben.")
     return hints
 
 

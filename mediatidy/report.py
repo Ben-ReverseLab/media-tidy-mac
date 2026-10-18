@@ -10,18 +10,18 @@ from pathlib import Path
 
 from .config import Config
 
-log = logging.getLogger("fototool")
+log = logging.getLogger("mediatidy")
 
 
 def report_dirs(cfg: Config, target: Path | None, dry_run: bool) -> list[Path]:
     """Erster Ordner ist lokal: Browser dürfen externe Laufwerke oft nicht lesen, der Bericht muss aber
-    immer zu öffnen sein. Echte Läufe legen zusätzlich eine Kopie in <ziel>/_FotoTool-Berichte ab."""
+    immer zu öffnen sein. Echte Läufe legen zusätzlich eine Kopie in <ziel>/_MediaTidy-Berichte ab."""
     custom = (cfg.get("berichte.ordner") or "").strip()
     if custom:
         return [Path(custom).expanduser()]
     dirs = [cfg.data_dir / "berichte"]
     if not dry_run and target is not None:  # Probelauf verändert den Zielordner nicht
-        dirs.append(target / "_FotoTool-Berichte")
+        dirs.append(target / "_MediaTidy-Berichte")
     return dirs
 
 

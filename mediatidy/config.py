@@ -1,4 +1,4 @@
-"""Einstellungen: defaults.toml + ~/.fototool/config.toml, Profile, Migration."""
+"""Einstellungen: defaults.toml + ~/.mediatidy/config.toml, Profile, Migration."""
 from __future__ import annotations
 
 import copy
@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 DEFAULTS_FILE = Path(__file__).with_name("defaults.toml")
 CONFIG_VERSION = 1
-USER_DIR_DEFAULT = Path("~/.fototool").expanduser()
+USER_DIR_DEFAULT = Path("~/.mediatidy").expanduser()
 
 
 def load_defaults() -> dict:
@@ -170,7 +170,7 @@ class Config:
         changed = diff(self.defaults, self.data)
         changed["version"] = CONFIG_VERSION
         tmp = self.user_file.with_suffix(".tmp")
-        tmp.write_text("# FotoTool – eigene Einstellungen (nur Abweichungen vom Standard)\n"
+        tmp.write_text("# MediaTidy – eigene Einstellungen (nur Abweichungen vom Standard)\n"
                        + dumps_toml(changed), encoding="utf-8")
         tmp.replace(self.user_file)
 

@@ -1,4 +1,4 @@
-"""Tests: python3 -m unittest discover -s tests  (im Ordner FotoTool)."""
+"""Tests: python3 -m unittest discover -s tests  (im Ordner MediaTidy)."""
 from __future__ import annotations
 
 import os
@@ -9,13 +9,13 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from fototool.config import Config, diff, dumps_toml, load_defaults, merge, migrate
-from fototool.context import RunContext
-from fototool.jobs import AccessError, DupParams, SortParams, SyncParams, run_job
-from fototool.journal import list_journals, undo
-from fototool.metadata import Meta, parse_exif_date
-from fototool.patterns import PatternError, PatternRenderer, validate
-from fototool.scan import FileEntry, Scanner
+from mediatidy.config import Config, diff, dumps_toml, load_defaults, merge, migrate
+from mediatidy.context import RunContext
+from mediatidy.jobs import AccessError, DupParams, SortParams, SyncParams, run_job
+from mediatidy.journal import list_journals, undo
+from mediatidy.metadata import Meta, parse_exif_date
+from mediatidy.patterns import PatternError, PatternRenderer, validate
+from mediatidy.scan import FileEntry, Scanner
 
 
 def write(p: Path, data: bytes, mtime: float | None = None) -> Path:
@@ -28,7 +28,7 @@ def write(p: Path, data: bytes, mtime: float | None = None) -> Path:
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="fototool-test-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="mediatidy-test-"))
         self.cfg = Config(self.tmp / "cfg")
         self.cfg.set("pfade.datenordner", str(self.tmp / "data"))
         self.cfg.set("vergleich.teilhash_kb", 1)  # kleine Testdateien
@@ -221,7 +221,7 @@ class MatchSyncTests(Base):
         return src, dst
 
     def test_stops_after_first_target_match(self):
-        from fototool.hashing import Hasher
+        from mediatidy.hashing import Hasher
         src, dst = self._setup()
         sc, _ = Scanner(self.cfg).scan(src, self.ctx)
         tc, _ = Scanner(self.cfg).scan(dst, self.ctx)
@@ -383,7 +383,7 @@ class RegressionTests(Base):
         def finder_refuses(cmd, **kw):
             self.assertIn("set f to POSIX file (p as text)", cmd)  # Form, die der Finder versteht
             return subprocess.CompletedProcess(cmd, 0, f"{cmd[-1]}\tZugriff verweigert\n", "")
-        with mock.patch("fototool.actions.subprocess.run", side_effect=finder_refuses):
+        with mock.patch("mediatidy.actions.subprocess.run", side_effect=finder_refuses):
             res = run_job(self.cfg, self.ctx, "duplikate",
                           DupParams(str(root), "aeltestes", "papierkorb", probelauf=False, bestaetigt=True))
         row = next(r for r in res.rows if r.get("Datei", "").endswith("b.jpg"))
@@ -402,11 +402,11 @@ class RegressionTests(Base):
         def finder_deletes(cmd, **kw):
             Path(cmd[-1]).unlink()
             return subprocess.CompletedProcess(cmd, 0, "\n", "")
-        with mock.patch("fototool.actions.subprocess.run", side_effect=finder_deletes):
+        with mock.patch("mediatidy.actions.subprocess.run", side_effect=finder_deletes):
             res = run_job(self.cfg, self.ctx, "duplikate",
                           DupParams(str(root), "aeltestes", "papierkorb", probelauf=False, bestaetigt=True))
         self.assertEqual(res.summary.get("In Papierkorb"), 1)
-        from fototool.journal import read_entries
+        from mediatidy.journal import read_entries
         self.assertEqual([e["aktion"] for e in read_entries(res.journal)], ["papierkorb"])
 
     def test_runs_in_same_second_have_own_journal_and_report(self):
@@ -465,7 +465,7 @@ class KleineBefundeTests(Base):
         write(src / "x.jpg", b"x" * 100)
         res = run_job(self.cfg, self.ctx, "abgleich", SyncParams([str(src)], str(dst), probelauf=False))
         self.assertEqual(res.reports[0].parent, self.cfg.data_dir / "berichte")  # wird geöffnet
-        self.assertEqual({p.parent for p in res.reports}, {self.cfg.data_dir / "berichte", dst / "_FotoTool-Berichte"})
+        self.assertEqual({p.parent for p in res.reports}, {self.cfg.data_dir / "berichte", dst / "_MediaTidy-Berichte"})
         self.assertEqual(len(res.reports), 4)
 
     def test_undo_removes_created_folders_only(self):
@@ -477,7 +477,7 @@ class KleineBefundeTests(Base):
         undo(res.journal, self.ctx)
         self.assertFalse((dst / "src").exists())
         self.assertTrue((dst / "leer_vorher").is_dir())
-        self.assertTrue((dst / "_FotoTool-Berichte").is_dir())  # Berichte bleiben
+        self.assertTrue((dst / "_MediaTidy-Berichte").is_dir())  # Berichte bleiben
 
     def test_undo_keeps_folder_with_new_files(self):
         src, dst = self.tmp / "src", self.tmp / "dst"

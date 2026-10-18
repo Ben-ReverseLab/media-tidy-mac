@@ -1,4 +1,4 @@
-# FotoTool
+# MediaTidy
 
 A macOS app for photographers: compare photos and videos between folders and drives, find duplicates, and sort files into folders by their metadata (capture date, camera, lens …).
 
@@ -10,7 +10,7 @@ A macOS app for photographers: compare photos and videos between folders and dri
 
 > **Note:** The user interface, settings and command-line options are currently in **German**. This README translates the relevant terms.
 
-> **Warning:** FotoTool copies, moves and (if you choose) trashes files. Keep a backup of your photos, start with a dry run and read the report before executing. The software is provided without warranty (see [LICENSE](LICENSE)).
+> **Warning:** MediaTidy copies, moves and (if you choose) trashes files. Keep a backup of your photos, start with a dry run and read the report before executing. The software is provided without warranty (see [LICENSE](LICENSE)).
 
 ## Requirements
 
@@ -25,26 +25,26 @@ A macOS app for photographers: compare photos and videos between folders and dri
 brew install python-tk@3.14 exiftool          # Homebrew; any Python ≥ 3.11 with tkinter works
 git clone https://github.com/Ben-ReverseLab/media-tidy-mac.git
 cd media-tidy-mac
-app/build-app.sh                              # builds FotoTool.app (a small launcher, signed locally)
-python3 -m fototool pruefen                   # checks dependencies and drive access
+app/build-app.sh                              # builds MediaTidy.app (a small launcher, signed locally)
+python3 -m mediatidy pruefen                   # checks dependencies and drive access
 ```
 
 If Homebrew asks for it, run `sudo xcodebuild -license accept` first.
 
 ### Permissions
 
-macOS grants file access per app, so grant it to **FotoTool.app**, not to Terminal:
+macOS grants file access per app, so grant it to **MediaTidy.app**, not to Terminal:
 
 - **External drives:** macOS asks on first access → click “Allow” (removable volumes).
-- **Apple Photos library:** System Settings → Privacy & Security → **Full Disk Access** → `+` → select `FotoTool.app` from the cloned folder.
+- **Apple Photos library:** System Settings → Privacy & Security → **Full Disk Access** → `+` → select `MediaTidy.app` from the cloned folder.
 
 After rebuilding the app (`app/build-app.sh`) you may have to grant Full Disk Access again.
 
 ## Usage
 
-Double-click **`FotoTool.app`**. (`FotoTool.command` also works, but then Terminal needs the permissions.)
+Double-click **`MediaTidy.app`**. (`MediaTidy.command` also works, but then Terminal needs the permissions.)
 
-Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/FotoTool.applescript`.
+Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/MediaTidy.applescript`.
 
 ### Pages
 
@@ -82,16 +82,16 @@ Examples: `{Jahr}/{Jahr}-{Monat}-{Tag}`, `{Kamera}/{Jahr}`, file name `{Jahr}{Mo
 
 Month names can be changed in Settings (`muster.monatsnamen`).
 
-**Name review:** if a pattern uses `{Kamera}`, `{Hersteller}` or `{Objektiv}`, FotoTool lists all names it has not seen before – after reading the metadata, before changing anything. Example: a drone that writes slightly different model names into its photos and videos. Rename or accept them; the mapping is saved in Settings → Metadaten (`kamera_namen`, `hersteller_namen`, `objektiv_namen`) and not asked again. Turn off with `metadaten.namen_pruefen = false`.
+**Name review:** if a pattern uses `{Kamera}`, `{Hersteller}` or `{Objektiv}`, MediaTidy lists all names it has not seen before – after reading the metadata, before changing anything. Example: a drone that writes slightly different model names into its photos and videos. Rename or accept them; the mapping is saved in Settings → Metadaten (`kamera_namen`, `hersteller_namen`, `objektiv_namen`) and not asked again. Turn off with `metadaten.namen_pruefen = false`.
 
 ## Command line
 
 ```sh
-python3 -m fototool abgleich --quelle ~/Pictures/2025 --quelle ~/Pictures/2026 --ziel /Volumes/Backup/Photos
-python3 -m fototool abgleich --profil "Pictures → Backup" --ausfuehren
-python3 -m fototool duplikate --ordner /Volumes/Backup/Photos --aktion verschieben --ausfuehren
-python3 -m fototool sortieren --quelle ~/Import --ziel ~/Sorted --muster "{Jahr}/{Kamera}" --verschieben --ausfuehren
-python3 -m fototool rueckgaengig --ausfuehren
+python3 -m mediatidy abgleich --quelle ~/Pictures/2025 --quelle ~/Pictures/2026 --ziel /Volumes/Backup/Photos
+python3 -m mediatidy abgleich --profil "Pictures → Backup" --ausfuehren
+python3 -m mediatidy duplikate --ordner /Volumes/Backup/Photos --aktion verschieben --ausfuehren
+python3 -m mediatidy sortieren --quelle ~/Import --ziel ~/Sorted --muster "{Jahr}/{Kamera}" --verschieben --ausfuehren
+python3 -m mediatidy rueckgaengig --ausfuehren
 ```
 
 | Command / option | Meaning |
@@ -114,13 +114,13 @@ python3 -m fototool rueckgaengig --ausfuehren
 
 | Path | Contents |
 |---|---|
-| `fototool/defaults.toml` | Default settings with explanations – don’t edit |
-| `~/.fototool/config.toml` | Your settings (only values that differ from the defaults) |
-| `~/.fototool/profile/` | Saved profiles |
-| `~/.fototool/journal/` | Log of every action (for undo) |
-| `~/.fototool/berichte/` | All reports (real runs also put a copy into `_FotoTool-Berichte` in the target) |
-| `~/.fototool/cache.db` | Checksum cache (makes repeated runs fast; safe to delete) |
-| `~/.fototool/logs/` | Log files |
+| `mediatidy/defaults.toml` | Default settings with explanations – don’t edit |
+| `~/.mediatidy/config.toml` | Your settings (only values that differ from the defaults) |
+| `~/.mediatidy/profile/` | Saved profiles |
+| `~/.mediatidy/journal/` | Log of every action (for undo) |
+| `~/.mediatidy/berichte/` | All reports (real runs also put a copy into `_MediaTidy-Berichte` in the target) |
+| `~/.mediatidy/cache.db` | Checksum cache (makes repeated runs fast; safe to delete) |
+| `~/.mediatidy/logs/` | Log files |
 
 ## Development
 

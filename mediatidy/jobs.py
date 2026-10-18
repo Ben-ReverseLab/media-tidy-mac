@@ -55,9 +55,9 @@ class AccessError(PermissionError):
     """Ordner nicht lesbar/erreichbar – Lauf wird abgebrochen statt falscher Ergebnisse."""
 
 
-ACCESS_HINT = ("\n\nFotoTool braucht Zugriff: Systemeinstellungen → Datenschutz & Sicherheit → "
-               "Festplattenvollzugriff → FotoTool.app hinzufügen (bzw. bei Nachfrage „Erlauben“), "
-               "dann FotoTool neu starten.")
+ACCESS_HINT = ("\n\nMediaTidy braucht Zugriff: Systemeinstellungen → Datenschutz & Sicherheit → "
+               "Festplattenvollzugriff → MediaTidy.app hinzufügen (bzw. bei Nachfrage „Erlauben“), "
+               "dann MediaTidy neu starten.")
 
 
 def ensure_access(path: Path, must_exist: bool = True) -> None:

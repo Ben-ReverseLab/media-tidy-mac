@@ -1,5 +1,5 @@
-# FotoTool – Standardeinstellungen.
-# Nicht hier ändern: eigene Werte gehören in ~/.fototool/config.toml
+# MediaTidy – Standardeinstellungen.
+# Nicht hier ändern: eigene Werte gehören in ~/.mediatidy/config.toml
 # (oder im Programm unter "Einstellungen"). Fehlende Werte kommen von hier.
 
 version = 1
@@ -21,7 +21,7 @@ ignorieren = [
   ".DS_Store", "._*", ".localized", "Thumbs.db", "desktop.ini",
   ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems",
   "*.lrdata", "*.lrcat", "*.lrcat-data", "Old Lightroom Catalogs",
-  "_Duplikate", "_FotoTool-Berichte",
+  "_Duplikate", "_MediaTidy-Berichte",
 ]
 # Versteckte Dateien/Ordner (Name beginnt mit ".") überspringen
 versteckte_ignorieren = true
@@ -150,7 +150,7 @@ aktion = "bericht"
 ordner = "_Duplikate"
 
 [berichte]
-# Ordner für Berichte; leer = Datenordner/berichte, bei echten Läufen zusätzlich Kopie in "_FotoTool-Berichte" im Zielordner
+# Ordner für Berichte; leer = Datenordner/berichte, bei echten Läufen zusätzlich Kopie in "_MediaTidy-Berichte" im Zielordner
 ordner = ""
 csv = true
 html = true
@@ -158,7 +158,7 @@ html = true
 [pfade]
 # Leer = automatisch suchen
 exiftool = ""
-# Arbeitsdaten (Cache, Journal, Logs, Profile, Berichte vom Probelauf); leer = Einstellungsordner (~/.fototool)
+# Arbeitsdaten (Cache, Journal, Logs, Profile, Berichte vom Probelauf); leer = Einstellungsordner (~/.mediatidy)
 datenordner = ""
 # Lightroom-Classic-Kataloge (Glob). Beim Verschieben aus deren Ordnern wird gewarnt.
 lightroom_kataloge = ["~/Pictures/Lightroom/*.lrcat", "~/Pictures/Lightroom*/*.lrcat"]

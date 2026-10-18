@@ -5,7 +5,7 @@ import logging
 import threading
 from typing import Callable
 
-log = logging.getLogger("fototool")
+log = logging.getLogger("mediatidy")
 
 
 class Cancelled(Exception):

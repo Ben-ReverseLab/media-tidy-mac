@@ -13,7 +13,7 @@ from .hashing import Hasher
 from .journal import Journal
 from .scan import FileEntry
 
-TMP_SUFFIX = ".fototool-tmp"
+TMP_SUFFIX = ".mediatidy-tmp"
 
 
 @dataclass

@@ -1,12 +1,12 @@
-"""Praxis-Prüfung von FotoTool mit selbst erzeugten, echten Mediendateien.
+"""Praxis-Prüfung von MediaTidy mit selbst erzeugten, echten Mediendateien.
 
-Aufruf (im Ordner FotoTool):  python3 tests/praxis_pruefung.py [arbeitsordner] [bereich …]
+Aufruf (im Ordner MediaTidy):  python3 tests/praxis_pruefung.py [arbeitsordner] [bereich …]
   z.B. python3 tests/praxis_pruefung.py /tmp/ft-pruefung t_sync t_dups
 
 Braucht: exiftool, ffmpeg, sips, hdiutil (macOS). Dauer: ca. 3–5 Minuten.
 Fasst keine vorhandenen Bilder an: alles entsteht im Arbeitsordner (Standard: neuer Temp-Ordner),
 dazu zwei kleine Disk-Images, die kurz als /Volumes/FTTESTHFS und /Volumes/FTTESTEXFAT erscheinen.
-Der Papierkorb-Test legt eine Testdatei „FotoTool-Prueftest-Kopie.jpg“ in den echten Papierkorb.
+Der Papierkorb-Test legt eine Testdatei „MediaTidy-Prueftest-Kopie.jpg“ in den echten Papierkorb.
 Ausgabe: [OK] / [FEHLER] / [BEFUND] (bekanntes, bewusst so gelassenes Verhalten). Rückgabecode 1 bei Fehlern.
 """
 from __future__ import annotations
@@ -27,18 +27,18 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from fototool.config import Config, Profiles  # noqa: E402
-from fototool.context import Declined, RunContext  # noqa: E402
-from fototool.jobs import AccessError, DupParams, SortParams, SyncParams, run_job  # noqa: E402
-from fototool.journal import list_journals, read_entries, undo  # noqa: E402
-from fototool.metadata import MetadataReader  # noqa: E402
-from fototool.patterns import PatternError  # noqa: E402
-from fototool.scan import Scanner  # noqa: E402
+from mediatidy.config import Config, Profiles  # noqa: E402
+from mediatidy.context import Declined, RunContext  # noqa: E402
+from mediatidy.jobs import AccessError, DupParams, SortParams, SyncParams, run_job  # noqa: E402
+from mediatidy.journal import list_journals, read_entries, undo  # noqa: E402
+from mediatidy.metadata import MetadataReader  # noqa: E402
+from mediatidy.patterns import PatternError  # noqa: E402
+from mediatidy.scan import Scanner  # noqa: E402
 
 import tempfile  # noqa: E402
 
 _ARGS = [a for a in sys.argv[1:] if not a.startswith("t_")]
-ROOT = Path(_ARGS[0] if _ARGS else tempfile.mkdtemp(prefix="fototool-praxis-")).resolve()
+ROOT = Path(_ARGS[0] if _ARGS else tempfile.mkdtemp(prefix="mediatidy-praxis-")).resolve()
 PY = sys.executable
 RESULTS: list[tuple[str, str, str, str]] = []  # (bereich, art, name, detail)
 AREA = ""
@@ -149,7 +149,7 @@ def h(p: Path) -> str:
 def snapshot(d: Path) -> dict[str, str]:
     out = {}
     for p in sorted(d.rglob("*")):
-        if p.is_file() and "_FotoTool-Berichte" not in p.parts:
+        if p.is_file() and "_MediaTidy-Berichte" not in p.parts:
             out[str(p.relative_to(d))] = h(p)
     return out
 
@@ -192,7 +192,7 @@ def t_scan():
     blob(Q / "notes.txt", b"x"); img(Q / ".versteckt.jpg", 10); blob(Q / "._a.jpg", b"appledouble")
     blob(Q / "Thumbs.db", b"x"); blob(Q / "ohne_endung", b"x"); os.symlink(Q / "a.jpg", Q / "link.jpg")
     img(Q / "Übersicht 🌅 Strand.jpg", 11); img(Q / "sub" / "tief" / "x.jpg", 12)
-    img(Q / "_Duplikate" / "y.jpg", 13); img(Q / "_FotoTool-Berichte" / "r.jpg", 14)
+    img(Q / "_Duplikate" / "y.jpg", 13); img(Q / "_MediaTidy-Berichte" / "r.jpg", 14)
     img(Q / "Fotos.photoslibrary" / "originals" / "0" / "UUID-1.heic", 15)
     img(Q / "Fotos.photoslibrary" / "resources" / "derivatives" / "0" / "UUID-1_1_105_c.jpeg", 16)
     img(Q / "Fotos.photoslibrary" / "database" / "x.jpg", 17)
@@ -374,7 +374,7 @@ def t_sync():
        status_of(res, Q / "IMG_6000.xmp") == "Sidecar würde ergänzt", status_of(res, Q / "IMG_6000.xmp"))
     ok("Probelauf: Ziel unverändert", snapshot(Z) == z0)
     ok("Probelauf: Quelle unverändert", snapshot(Q) == q0)
-    ok("Probelauf: Bericht im Datenordner, nicht im Ziel", not (Z / "_FotoTool-Berichte").exists()
+    ok("Probelauf: Bericht im Datenordner, nicht im Ziel", not (Z / "_MediaTidy-Berichte").exists()
        and all(str(c.data_dir) in str(r) for r in res.reports), res.reports)
     # Echter Lauf
     res = run(c, "abgleich", SyncParams([str(Q)], str(Z), True, "struktur", "", "", False))
@@ -391,8 +391,8 @@ def t_sync():
     ok("Zeitstempel erhalten", abs((Z / "Import/neu_1.jpg").stat().st_mtime - (Q / "neu_1.jpg").stat().st_mtime) < 1)
     ok("Vorhandene Zieldateien unverändert", all(snapshot(Z).get(k) == v for k, v in z0.items()))
     ok("Quelle unverändert (Kopieren)", snapshot(Q) == q0)
-    ok("Keine .fototool-tmp Reste", not list(Z.rglob("*.fototool-tmp")))
-    ok("Bericht im Ziel/_FotoTool-Berichte", any("_FotoTool-Berichte" in str(r) for r in res.reports), res.reports)
+    ok("Keine .mediatidy-tmp Reste", not list(Z.rglob("*.mediatidy-tmp")))
+    ok("Bericht im Ziel/_MediaTidy-Berichte", any("_MediaTidy-Berichte" in str(r) for r in res.reports), res.reports)
     ok("Journal angelegt", res.journal and res.journal.exists(), res.journal)
     # CSV prüfen
     csvf = next(r for r in res.reports if r.suffix == ".csv")
@@ -490,7 +490,7 @@ def t_sync_edge():
     l0 = snapshot(lib)
     r = run(c, "abgleich", SyncParams([str(lib)], str(W / "Z6"), True, "struktur", "", "", False))
     ok("Fotos-Mediathek: nur Original gesichert, als 'Mediathek/A/UUID1.heic'",
-       sorted(str(p.relative_to(W / "Z6")) for p in (W / "Z6").rglob("*.*") if "_FotoTool" not in str(p))
+       sorted(str(p.relative_to(W / "Z6")) for p in (W / "Z6").rglob("*.*") if "_MediaTidy" not in str(p))
        == ["Mediathek/A/UUID1.heic"], list((W / "Z6").rglob("*")))
     ok("Mediathek unverändert", snapshot(lib) == l0)
     # Muster-Ablage
@@ -532,7 +532,7 @@ def t_sync_access():
         ok("… keine halbe Datei im Ziel", not (W / "Z9" / "Q" / "b.jpg").exists() and not list((W / "Z9").rglob("*tmp")))
     finally:
         os.chmod(W / "Q" / "b.jpg", 0o644)
-    for ziel in ("/Volumes/FotoToolGibtsNicht/Backup", "/Volumes/FotoToolGibtsNicht"):
+    for ziel in ("/Volumes/MediaTidyGibtsNicht/Backup", "/Volumes/MediaTidyGibtsNicht"):
         try:
             run(c, "abgleich", SyncParams([str(W / "Q")], ziel, True, "struktur", "", "", True))
             ok(f"Nicht angeschlossenes Laufwerk ({ziel}) → Abbruch", False, "kein Fehler")
@@ -634,17 +634,17 @@ def t_dups():
        not any("Export/UUID-kopie.heic" in x["Datei"] for x in rn.rows))
     # Papierkorb ohne Bestätigung: nichts passiert
     P = ROOT / "s6" / "P"
-    img(P / "FotoTool-Prueftest.jpg", 210, mtime=TS("2020-01-01 10:00"))
-    cp(P / "FotoTool-Prueftest.jpg", P / "FotoTool-Prueftest-Kopie.jpg", TS("2026-01-01 10:00"))
-    blob(P / "FotoTool-Prueftest-Kopie.xmp", b"<xmp/>")
+    img(P / "MediaTidy-Prueftest.jpg", 210, mtime=TS("2020-01-01 10:00"))
+    cp(P / "MediaTidy-Prueftest.jpg", P / "MediaTidy-Prueftest-Kopie.jpg", TS("2026-01-01 10:00"))
+    blob(P / "MediaTidy-Prueftest-Kopie.xmp", b"<xmp/>")
     rp = run(c, "duplikate", DupParams(str(P), "aeltestes", "papierkorb", "_Duplikate", False, False))
-    ok("Papierkorb ohne Bestätigung: nichts gelöscht", (P / "FotoTool-Prueftest-Kopie.jpg").exists())
+    ok("Papierkorb ohne Bestätigung: nichts gelöscht", (P / "MediaTidy-Prueftest-Kopie.jpg").exists())
     # Papierkorb echt (über Finder)
     rp = run(c, "duplikate", DupParams(str(P), "aeltestes", "papierkorb", "_Duplikate", False, True))
     st = [x["Status"] for x in rp.rows if x.get("Datei", "").endswith("Kopie.jpg")]
     ok("Papierkorb über Finder: Duplikat + Sidecar weg, Original bleibt",
-       not (P / "FotoTool-Prueftest-Kopie.jpg").exists() and not (P / "FotoTool-Prueftest-Kopie.xmp").exists()
-       and (P / "FotoTool-Prueftest.jpg").exists() and st == ["In Papierkorb"], f"{st} {rp.errors}")
+       not (P / "MediaTidy-Prueftest-Kopie.jpg").exists() and not (P / "MediaTidy-Prueftest-Kopie.xmp").exists()
+       and (P / "MediaTidy-Prueftest.jpg").exists() and st == ["In Papierkorb"], f"{st} {rp.errors}")
     ok("Papierkorb im Journal vermerkt", rp.journal and
        sum(e["aktion"] == "papierkorb" for e in read_entries(rp.journal)) == 2, rp.journal)
 
@@ -829,7 +829,7 @@ def t_cancel():
     ok("Abbruch: Teilbericht geschrieben", rc.reports and all(r.exists() for r in rc.reports)
        and "⚠️ Abgebrochen" in rc.summary, rc.reports)
     copied = list((W / "Z").rglob("*.jpg"))
-    ok("Nach Abbruch: keine halben Dateien (.fototool-tmp)", not list((W / "Z").rglob("*.fototool-tmp")))
+    ok("Nach Abbruch: keine halben Dateien (.mediatidy-tmp)", not list((W / "Z").rglob("*.mediatidy-tmp")))
     ok("Nach Abbruch: kopierte Dateien vollständig", all(h(p) == h(Q / p.name) for p in copied))
     js = list_journals(c.data_dir)
     n_files = sum(e["aktion"] == "kopiert" for e in read_entries(js[0])) if js else 0
@@ -860,7 +860,7 @@ def t_misc():
     pr.save("Urlaub/2025: Test", {"aufgabe": "abgleich", "parameter": {"quellen": ["/a"], "ziel": "/b", "neu": 1}})
     ok("Profilname mit / und : sicher gespeichert", "Urlaub/2025: Test" in pr.names()
        and all("/" not in p.name.replace(".json", "") or True for p in pr.dir.iterdir()))
-    from fototool.jobs import params_from_dict
+    from mediatidy.jobs import params_from_dict
     p = params_from_dict("abgleich", pr.load("Urlaub/2025: Test")["parameter"])
     ok("Profil mit unbekanntem Feld lädt trotzdem", p.quellen == ["/a"] and p.ziel == "/b")
     # Cache: gleiche Größe + gleicher Zeitstempel, anderer Inhalt
@@ -878,8 +878,8 @@ def t_misc():
     cd = W / "cli-cfg"
 
     def cli(*args):
-        return subprocess.run([PY, "-m", "fototool", "--config-dir", str(cd), *args], capture_output=True, text=True,
-                              cwd=Path.home() / "FotoTool")
+        return subprocess.run([PY, "-m", "mediatidy", "--config-dir", str(cd), *args], capture_output=True, text=True,
+                              cwd=Path(__file__).resolve().parent.parent)
     o = cli("abgleich", "--quelle", str(Q), "--ziel", str(Z))
     ok("CLI abgleich Probelauf", o.returncode == 0 and "Fehlen im Ziel: 2" in o.stdout and not Z.exists(), o.stdout + o.stderr)
     o = cli("--ausfuehren", "abgleich", "--quelle", str(Q), "--ziel", str(Z))
@@ -893,7 +893,7 @@ def t_misc():
     o = cli("sortieren", "--quelle", str(Q), "--ziel", str(W / "cli" / "S"), "--muster", "{Foo}")
     ok("CLI ungültiges Muster → Fehlercode, nichts angelegt", o.returncode == 2 and not (W / "cli" / "S").exists(),
        o.stdout + o.stderr)
-    o = cli("abgleich", "--quelle", str(Q), "--ziel", "/Volumes/FotoToolGibtsNicht")
+    o = cli("abgleich", "--quelle", str(Q), "--ziel", "/Volumes/MediaTidyGibtsNicht")
     ok("CLI fehlendes Laufwerk → Fehlercode 2", o.returncode == 2 and "nicht angeschlossen" in o.stderr, o.stderr)
     o = cli("pruefen")
     ok("CLI pruefen läuft", o.returncode == 0, o.stderr)
@@ -903,7 +903,7 @@ def t_misc():
 @area("11 Lightroom-Katalog-Warnung beim Verschieben")
 def t_lightroom():
     import sqlite3
-    from fototool.lightroom import affected_catalogs
+    from mediatidy.lightroom import affected_catalogs
     lr = ROOT / "lr"
     lr.mkdir(exist_ok=True)
     con = sqlite3.connect(lr / "Test Katalog.lrcat")

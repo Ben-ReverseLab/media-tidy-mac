@@ -155,7 +155,7 @@ class App:
         self.last_result: JobResult | None = None
         self.drive_hints: list = []
 
-        root.title(f"FotoTool {__version__}")
+        root.title(f"MediaTidy {__version__}")
         root.geometry(cfg.get("oberflaeche.fenster", "1100x800"))
         root.minsize(900, 640)
         root.configure(bg=P["papier"])
@@ -267,7 +267,7 @@ class App:
         side = tk.Frame(parent, bg=P["seite"], width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        tk.Label(side, text="FotoTool", font=self.fonts["h2"], bg=P["seite"], fg=P["graphit"]
+        tk.Label(side, text="MediaTidy", font=self.fonts["h2"], bg=P["seite"], fg=P["graphit"]
                  ).pack(anchor="w", padx=22, pady=(26, 0))
         tk.Label(side, text=f"Version {__version__}", font=self.fonts["small"], bg=P["seite"], fg=P["schiefer"]
                  ).pack(anchor="w", padx=22, pady=(0, 22))
@@ -681,7 +681,7 @@ class App:
         bf.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Button(bf, text="Rückgängig machen", command=self._hist_undo).pack(side="left")
         ttk.Button(bf, text="Aktualisieren", command=self._hist_refresh).pack(side="left", padx=6)
-        ttk.Button(bf, text="Logdatei", command=lambda: open_path(self.cfg.data_dir / "logs" / "fototool.log")
+        ttk.Button(bf, text="Logdatei", command=lambda: open_path(self.cfg.data_dir / "logs" / "mediatidy.log")
                    ).pack(side="right")
         ttk.Button(bf, text="Berichte-Ordner", command=lambda: open_path(self.cfg.data_dir / "berichte")
                    ).pack(side="right", padx=6)
@@ -978,7 +978,7 @@ class App:
                 self.q.put(("done", None))
             except Exception as e:  # noqa: BLE001 – alles anzeigen statt abstürzen
                 import logging
-                logging.getLogger("fototool").exception("Fehler im Lauf")
+                logging.getLogger("mediatidy").exception("Fehler im Lauf")
                 self.q.put(("msg", f"❌ Fehler: {e}"))
                 self.q.put(("done", None))
 
@@ -1070,7 +1070,7 @@ class App:
                         self.prog.step(5)
                         self.prog_label.configure(text=f"{phase}: {done} Dateien")
                 elif kind == "alert":
-                    messagebox.showerror("FotoTool", data)
+                    messagebox.showerror("MediaTidy", data)
                 elif kind == "names":
                     todo, answer, ev = data
                     answer["namen"] = self._names_dialog(todo)
