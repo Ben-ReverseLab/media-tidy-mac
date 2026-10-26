@@ -291,8 +291,10 @@ class App:
             for k in ("<Return>", "<space>"):
                 lbl.bind(k, lambda e, idx=idx: self.nb.select(idx))
             self.nav_items[idx] = (row, mark, lbl)
-        tk.Label(side, text=t("gui.shortcuts"), font=self.fonts["small"], bg=P["side"],
-                 fg=P["slate"]).pack(side="bottom", anchor="w", padx=22, pady=18)
+        # Wrap instead of clipping: the sidebar has a fixed width and Tk 9 renders text wider
+        tk.Label(side, text=t("gui.shortcuts"), font=self.fonts["small"], bg=P["side"], fg=P["slate"],
+                 wraplength=int(side.cget("width")) - 2 * 22, justify="left"
+                 ).pack(side="bottom", anchor="w", padx=22, pady=18)
 
     def _page_changed(self):
         cur = self.nb.index(self.nb.select())
