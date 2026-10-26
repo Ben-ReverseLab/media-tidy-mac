@@ -1,0 +1,10 @@
+Code signing certificate of the downloadable MediaTidy.app (self-signed, not from Apple).
+It keeps the app's identity stable, so macOS keeps Full Disk Access across updates.
+The private key is only stored as the GitHub secret MEDIATIDY_SIGN_P12 (+ MEDIATIDY_SIGN_PASSWORD).
+Check a downloaded app:  codesign -d -r- /Applications/MediaTidy.app
+  → designated => identifier "io.github.ben-reverselab.mediatidy" and certificate leaf = H"<SHA-1>"
+
+Subject: CN=MediaTidy (Ben-ReverseLab)
+Valid until: 2036-10-23
+SHA-1: 9D49A09EE760B77B0B642569387669E6EE4290D5
+SHA-256: 3EFFAFFEFBA5AEFF403F6F1FC1BE3999809C97877CDBCDBD3B24E22D29E0B73C

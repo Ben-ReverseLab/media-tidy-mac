@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Download: a ready-to-use `MediaTidy.app` for macOS 13 or later (Apple silicon and Intel) as a DMG on the releases page – Python, Tk and ExifTool are built in, nothing else to install. Every release is signed with the same certificate, so macOS keeps Full Disk Access across updates.
+- Homebrew: `brew install --cask ben-reverselab/tap/mediatidy`.
 - Colour themes: automatic (light or dark like macOS), light, dark, sand, sage, night blue and graphite (`ui.theme`, takes effect after a restart).
 - HTML report: filter the table by status (drop-down next to the text filter, with counts).
 

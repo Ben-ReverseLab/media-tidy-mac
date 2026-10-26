@@ -1,0 +1,128 @@
+name: Release
+
+# Tag v<version> (= mediatidy.__version__, with a CHANGELOG section) → build, publish, update Homebrew.
+# Run manually ("Run workflow") to only build: the DMG is then a workflow artifact, nothing is published.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  tests:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    needs: tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # python.org universal2 build; 3.14.9+ ships the Tk fix for dialogs hanging on macOS 27
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Check versions
+        id: version
+        run: |
+          python -c 'import sys; assert sys.version_info >= (3, 14, 9), sys.version'
+          version=$(python -c 'import mediatidy; print(mediatidy.__version__)')
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match mediatidy.__version__ $version"; exit 1
+          fi
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section [$version]"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install build tools
+        run: python -m pip install --require-hashes -r packaging/requirements-build.txt
+      - name: Import code signing certificate
+        env:
+          MEDIATIDY_SIGN_P12: ${{ secrets.MEDIATIDY_SIGN_P12 }}
+          MEDIATIDY_SIGN_PASSWORD: ${{ secrets.MEDIATIDY_SIGN_PASSWORD }}
+        run: packaging/import-certificate.sh >> "$GITHUB_ENV"
+      - name: Build app and disk image
+        run: PYTHON=python packaging/build.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MediaTidy-${{ steps.version.outputs.version }}
+          path: dist/MediaTidy-*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MediaTidy-${{ needs.build.outputs.version }}
+          path: dist
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/MediaTidy-*.dmg
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {f = 1; next} /^## \[/ && f {exit} f' CHANGELOG.md > notes.md
+          sed "s/VERSION/$VERSION/g" packaging/release-notes.md >> notes.md
+          gh release create "$GITHUB_REF_NAME" dist/MediaTidy-* --verify-tag \
+            --title "MediaTidy $VERSION" --notes-file notes.md
+
+  homebrew:
+    if: github.ref_type == 'tag'
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      HAS_TAP_KEY: ${{ secrets.TAP_DEPLOY_KEY != '' }}
+    steps:
+      - name: No tap key yet
+        if: env.HAS_TAP_KEY != 'true'
+        run: echo "::notice::Secret TAP_DEPLOY_KEY not set – Homebrew tap not updated"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.HAS_TAP_KEY == 'true'
+        with:
+          name: MediaTidy-${{ needs.build.outputs.version }}
+          path: dist
+      # Deploy key with write access to the tap repository only
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.HAS_TAP_KEY == 'true'
+        with:
+          repository: Ben-ReverseLab/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+      - name: Update cask
+        if: env.HAS_TAP_KEY == 'true'
+        working-directory: tap
+        run: |
+          sha=$(cut -d' ' -f1 "../dist/MediaTidy-$VERSION.dmg.sha256")
+          sed -i -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 \".*\"/  sha256 \"$sha\"/" Casks/mediatidy.rb
+          git diff --exit-code --quiet && { echo "Cask already at $VERSION"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "mediatidy $VERSION"
+          git push

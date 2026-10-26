@@ -1,7 +1,12 @@
-# No Python packages to update (standard library only) – keep the workflow actions current.
+# The app uses only the Python standard library. Kept current: the workflow actions and the build tools
+# for the downloadable app (packaging/requirements-build.txt, pinned with hashes).
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "monthly"
+  - package-ecosystem: "pip"
+    directory: "/packaging"
     schedule:
       interval: "monthly"

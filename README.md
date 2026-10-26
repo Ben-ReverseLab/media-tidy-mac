@@ -13,39 +13,37 @@ A macOS app for photographers: compare photos and videos between folders and dri
 
 > **Warning:** MediaTidy copies, moves and (if you choose) trashes files. Keep a backup of your photos, start with a dry run and read the report before executing. The software is provided without warranty (see [LICENSE](LICENSE)).
 
-## Requirements
-
-- macOS (uses Finder, `/Volumes`, AppleScript)
-- Python ≥ 3.11 with tkinter
-- [ExifTool](https://exiftool.org) (for date/camera/lens metadata)
-- No other Python packages
-
 ## Installation
 
+1. Download **[MediaTidy.dmg](https://github.com/Ben-ReverseLab/media-tidy-mac/releases/latest)** (macOS 13 Ventura or later, Apple silicon and Intel), open it and drag **MediaTidy** into **Applications**. Everything it needs, including [ExifTool](https://exiftool.org), is built in.
+2. **First start:** MediaTidy is free and open source but not notarized by Apple (that needs a paid Apple developer account), so macOS blocks it the first time:
+   - **macOS 15 or later:** open MediaTidy, click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** (shown for about an hour), confirm with your password.
+   - **macOS 13–14:** right-click (Control-click) MediaTidy → **Open** → **Open**.
+   - Or in Terminal: `xattr -dr com.apple.quarantine /Applications/MediaTidy.app`
+3. **Permissions** – macOS grants file access per app:
+   - **External drives:** macOS asks on first access → click “Allow”.
+   - **Apple Photos library:** System Settings → Privacy & Security → **Full Disk Access** → `+` → select MediaTidy.
+
+   Updates keep these permissions: every release is signed with the same certificate ([details](packaging/signing-certificate.txt)).
+
+### Homebrew
+
 ```sh
-brew install python-tk@3.14 exiftool          # Homebrew; any Python ≥ 3.11 with tkinter works
-git clone https://github.com/Ben-ReverseLab/media-tidy-mac.git
-cd media-tidy-mac
-app/build-app.sh                              # builds MediaTidy.app (a small launcher, signed locally)
-python3 -m mediatidy check                    # checks dependencies and drive access
+brew install --cask ben-reverselab/tap/mediatidy
 ```
 
-If Homebrew asks for it, run `sudo xcodebuild -license accept` first.
+The first start works as described above. `brew upgrade` installs new versions.
 
-### Permissions
+### Verify a download (optional)
 
-macOS grants file access per app, so grant it to **MediaTidy.app**, not to Terminal:
-
-- **External drives:** macOS asks on first access → click “Allow” (removable volumes).
-- **Apple Photos library:** System Settings → Privacy & Security → **Full Disk Access** → `+` → select `MediaTidy.app` from the cloned folder.
-
-After rebuilding the app (`app/build-app.sh`) you may have to grant Full Disk Access again.
+```sh
+shasum -a 256 -c MediaTidy-<version>.dmg.sha256
+gh attestation verify MediaTidy-<version>.dmg --repo Ben-ReverseLab/media-tidy-mac   # built by GitHub Actions from this repository
+```
 
 ## Usage
 
-Double-click **`MediaTidy.app`**. (`MediaTidy.command` also works, but then Terminal needs the permissions.)
-
-Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/MediaTidy.applescript`.
+Open **MediaTidy** from Applications.
 
 ### Pages
 
@@ -87,6 +85,15 @@ In the German interface placeholders are shown with German names (`{Jahr}`, `{Ka
 
 ## Command line
 
+The app has a command line too:
+
+```sh
+alias mediatidy=/Applications/MediaTidy.app/Contents/MacOS/MediaTidy   # e.g. in ~/.zshrc
+mediatidy sync --source ~/Pictures/2025 --target /Volumes/Backup/Photos
+```
+
+From a source checkout (see [Development](#development)) use `python3 -m mediatidy` instead:
+
 ```sh
 python3 -m mediatidy sync --source ~/Pictures/2025 --source ~/Pictures/2026 --target /Volumes/Backup/Photos
 python3 -m mediatidy sync --profile "Pictures → Backup" --execute
@@ -110,8 +117,6 @@ Without `--execute` every command is a dry run. `--yes` confirms trashing/overwr
 
 | Path | Contents |
 |---|---|
-| `mediatidy/defaults.toml` | Default settings with explanations – don’t edit |
-| `mediatidy/locales/` | Texts per language (`en.toml`, `de.toml`) |
 | `~/.mediatidy/config.toml` | Your settings (only values that differ from the defaults) |
 | `~/.mediatidy/profiles/` | Saved profiles |
 | `~/.mediatidy/journal/` | Log of every action (for undo) |
@@ -121,11 +126,30 @@ Without `--execute` every command is a dry run. `--yes` confirms trashing/overwr
 
 ## Development
 
+### Run from source
+
+Needs Python ≥ 3.11 with tkinter and ExifTool; no other Python packages.
+
+```sh
+brew install python-tk@3.14 exiftool          # Homebrew; any Python ≥ 3.11 with tkinter works
+git clone https://github.com/Ben-ReverseLab/media-tidy-mac.git
+cd media-tidy-mac
+app/build-app.sh                              # builds MediaTidy.app (a small launcher, signed locally)
+python3 -m mediatidy check                    # checks dependencies and drive access
+```
+
+If Homebrew asks for it, run `sudo xcodebuild -license accept` first. Double-click the **`MediaTidy.app`** in the cloned folder and grant the permissions to it (not to Terminal); after rebuilding it you may have to grant Full Disk Access again. `MediaTidy.command` also works, but then Terminal needs the permissions. Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/MediaTidy.applescript`.
+
+Settings defaults with explanations: `mediatidy/defaults.toml`; texts per language: `mediatidy/locales/`.
+
+### Notes
+
 - Python standard library + tkinter only; external tools: exiftool (and Finder via `osascript`).
 - Code, comments and data formats are English; user-facing texts live in `mediatidy/locales/*.toml` (same keys in every language, checked by a test).
 - New setting: add it with a comment to `defaults.toml` → it appears automatically on the Settings page (English help = the comment; German label/help: `setting.<key>` / `help.<key>` in `de.toml`).
 - Incompatible config change: increase `CONFIG_VERSION` in `config.py` and add a function to `MIGRATIONS`.
 - Unit tests (about a second): `python3 -m unittest discover -s tests` – GitHub Actions runs them on every push to `main` and on pull requests (`.github/workflows/tests.yml`).
+- Downloadable app: `packaging/build.sh` (PyInstaller, used only for building – see the comments in the script). Pushing a tag `v<version>` (= `mediatidy.__version__`, with a CHANGELOG section) builds, signs and publishes the release and updates the Homebrew cask (`.github/workflows/release.yml`); running that workflow manually only builds the DMG as an artifact. Bundled third-party software: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - Real-world check with generated photos/videos and disk images: `python3 tests/real_world_check.py` (3–5 min, needs exiftool and ffmpeg). **It moves test files into your real Finder Trash** and mounts temporary disk images.
 
 ## License

@@ -6,3 +6,8 @@ CLAUDE.md
 .claude/
 *.bundle
 *.mediatidy-tmp
+build/
+dist/
+*.dmg
+.venv-build/
+*.p12
