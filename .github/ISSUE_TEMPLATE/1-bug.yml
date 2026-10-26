@@ -1,0 +1,53 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting a bug! For security problems, please use the "Report a vulnerability" button in the Security tab instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Also tell us what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: e.g. 1.0.0 (shown in the sidebar)
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system / device
+      placeholder: e.g. macOS 15.4, Apple silicon / Intel
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error message or log
+      description: The end of ~/.mediatidy/logs/mediatidy.log helps a lot. Please remove personal folder names before pasting.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and this has not been reported yet.
+          required: true
