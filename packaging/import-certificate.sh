@@ -16,6 +16,10 @@ security unlock-keychain -p "$password" "$keychain"
 security import "$dir/cert.p12" -k "$keychain" -P "$MEDIATIDY_SIGN_PASSWORD" -f pkcs12 -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
 rm -f "$dir/cert.p12"
+# codesign also looks up the certificate through the search list; on your own Mac leave that list alone
+if [[ -n ${CI:-} ]]; then
+  security list-keychains -d user -s "$keychain" ${(f)"$(security list-keychains -d user | tr -d ' "')"}
+fi
 
 # The certificate is self-signed and therefore "not trusted" – codesign still uses it by its SHA-1
 identity=$(sed -n 's/^SHA-1: *//p' packaging/signing-certificate.txt)
