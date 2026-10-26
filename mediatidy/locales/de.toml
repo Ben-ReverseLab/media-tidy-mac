@@ -274,6 +274,7 @@
 "access.denied" = "Kein Zugriff auf {path}"
 "access.hint" = "MediaTidy braucht Zugriff: Systemeinstellungen → Datenschutz & Sicherheit → Festplattenvollzugriff → MediaTidy.app hinzufügen (bzw. bei Nachfrage „Erlauben“), dann MediaTidy neu starten."
 "check.no_exiftool" = "exiftool fehlt – Sortieren nach Aufnahmedatum/Kamera nur eingeschränkt.\n  Installieren: brew install exiftool"
+"check.no_perl" = "Das eingebaute exiftool braucht Perl (/usr/bin/perl), das auf diesem Mac fehlt – Sortieren nach Aufnahmedatum/Kamera nur eingeschränkt.\n  Alternative: brew install exiftool"
 "check.drive_hanging" = "Laufwerk reagiert nicht: {drives} – ggf. auswerfen und neu anschließen."
 "check.drive_blocked" = "Kein Zugriff auf: {drives}.\n  Systemeinstellungen → Datenschutz & Sicherheit → Festplattenvollzugriff:\n  MediaTidy.app hinzufügen (bzw. Terminal, falls über MediaTidy.command gestartet),\n  dann MediaTidy neu starten. Für externe Platten reicht meist „Wechseldatenträger“ erlauben."
 "config.invalid_value" = "Ungültiger Wert für '{key}': {value} – Standard {default} wird verwendet"

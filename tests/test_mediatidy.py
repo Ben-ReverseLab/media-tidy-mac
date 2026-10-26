@@ -649,6 +649,29 @@ class CliTests(Base):
 
 
 
+
+class ExiftoolLookupTests(Base):
+    def test_bundled_exiftool_runs_with_system_perl(self):
+        from unittest import mock
+        from mediatidy import metadata
+        bundle = self.tmp / "bundle"
+        write(bundle / "exiftool" / "exiftool", b"#!/usr/bin/perl\n")
+        with mock.patch.object(metadata.sys, "frozen", True, create=True), \
+                mock.patch.object(metadata.sys, "_MEIPASS", str(bundle), create=True):
+            self.assertEqual(metadata.find_exiftool(self.cfg),
+                             [metadata.SYSTEM_PERL, str(bundle / "exiftool" / "exiftool")])
+            own = write(self.tmp / "own-exiftool", b"")
+            own.chmod(0o755)
+            self.cfg.set("paths.exiftool", str(own))
+            self.assertEqual(metadata.find_exiftool(self.cfg), [str(own)])  # configured path wins
+
+    def test_no_bundle_when_run_from_source(self):
+        from mediatidy import metadata
+        self.assertIsNone(metadata.bundled_exiftool())
+        self.cfg.set("paths.exiftool", "/does/not/exist")
+        self.assertIsNone(metadata.find_exiftool(self.cfg))
+
+
 def contrast(a: str, b: str) -> float:
     """WCAG contrast ratio of two #RRGGBB colours."""
     def lum(h):

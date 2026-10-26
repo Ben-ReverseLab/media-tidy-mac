@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .config import Config
 from .i18n import t
-from .metadata import find_exiftool
+from .metadata import bundled_exiftool, find_exiftool
 
 
 def setup_logging(cfg: Config) -> Path:
@@ -30,7 +30,7 @@ def check(cfg: Config) -> list[str]:
     """List of readable hints (empty = all good)."""
     hints = list(cfg.warnings)
     if not find_exiftool(cfg):
-        hints.append(t("check.no_exiftool"))
+        hints.append(t("check.no_perl" if bundled_exiftool() else "check.no_exiftool"))
     status = probe_volumes()
     blocked = [v for v, st in status.items() if st == "blocked"]
     hanging = [v for v, st in status.items() if st == "hanging"]

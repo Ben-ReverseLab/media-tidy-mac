@@ -274,6 +274,7 @@
 "access.denied" = "No access to {path}"
 "access.hint" = "MediaTidy needs access: System Settings → Privacy & Security → Full Disk Access → add MediaTidy.app (or click “Allow” when asked), then restart MediaTidy."
 "check.no_exiftool" = "exiftool is missing – sorting by capture date/camera is limited.\n  Install: brew install exiftool"
+"check.no_perl" = "The built-in exiftool needs Perl (/usr/bin/perl), which is missing on this Mac – sorting by capture date/camera is limited.\n  Alternative: brew install exiftool"
 "check.drive_hanging" = "Drive not responding: {drives} – eject and reconnect it if needed."
 "check.drive_blocked" = "No access to: {drives}.\n  System Settings → Privacy & Security → Full Disk Access:\n  add MediaTidy.app (or Terminal, if started via MediaTidy.command),\n  then restart MediaTidy. For external drives, allowing “Removable Volumes” is usually enough."
 "config.invalid_value" = "Invalid value for '{key}': {value} – using the default {default}"

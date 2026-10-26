@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,17 +20,29 @@ from .scan import FileEntry
 NAME_FIELDS = {"Camera": "camera", "Make": "make", "Lens": "lens"}
 
 EXIFTOOL_CANDIDATES = ["/opt/homebrew/bin/exiftool", "/usr/local/bin/exiftool", "/usr/bin/exiftool"]
+SYSTEM_PERL = "/usr/bin/perl"
 
 
-def find_exiftool(cfg: Config) -> str | None:
+def bundled_exiftool() -> Path | None:
+    """exiftool shipped inside the app (packaging/build.sh puts it into the bundle); None when run from source."""
+    if not getattr(sys, "frozen", False):
+        return None
+    script = Path(getattr(sys, "_MEIPASS", "")) / "exiftool" / "exiftool"
+    return script if script.is_file() else None
+
+
+def find_exiftool(cfg: Config) -> list[str] | None:
+    """Command to start exiftool: configured path, then the bundled copy (run by the system Perl), then PATH
+    and the usual install locations. None = not found."""
     configured = (cfg.get("paths.exiftool") or "").strip()
     if configured:
         p = os.path.expanduser(configured)
-        return p if os.access(p, os.X_OK) else None
-    found = shutil.which("exiftool")
-    if found:
-        return found
-    return next((p for p in EXIFTOOL_CANDIDATES if os.access(p, os.X_OK)), None)
+        return [p] if os.access(p, os.X_OK) else None
+    bundled = bundled_exiftool()
+    if bundled and os.access(SYSTEM_PERL, os.X_OK):
+        return [SYSTEM_PERL, str(bundled)]
+    found = shutil.which("exiftool") or next((p for p in EXIFTOOL_CANDIDATES if os.access(p, os.X_OK)), None)
+    return [found] if found else None
 
 
 @dataclass
@@ -106,7 +119,7 @@ class MetadataReader:
             f.write("\n".join(str(p) for p in paths))
             argfile = f.name
         try:
-            cmd = [self.exiftool, "-json", "-fast", "-charset", "filename=utf8", "-api", "largefilesupport=1"]
+            cmd = [*self.exiftool, "-json", "-fast", "-charset", "filename=utf8", "-api", "largefilesupport=1"]
             cmd += [f"-{tag}" for tag in self._tags()] + ["-@", argfile]
             res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
             if not res.stdout.strip():
