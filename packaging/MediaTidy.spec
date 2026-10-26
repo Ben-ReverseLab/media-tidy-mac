@@ -7,6 +7,7 @@ ROOT = Path(SPECPATH).parent
 VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "mediatidy" / "__init__.py").read_text()).group(1)
 EXIFTOOL = Path(os.environ["MEDIATIDY_EXIFTOOL_DIR"])  # unpacked Image-ExifTool distribution (build.sh)
 BUNDLE_ID = "io.github.ben-reverselab.mediatidy"
+ICON = str(ROOT / "packaging" / "MediaTidy.icns")  # made by packaging/icon/make-icon.swift
 REMOVABLE = "MediaTidy compares and copies photos on external drives."
 
 datas = [
@@ -35,12 +36,14 @@ exe = EXE(
     console=False,
     argv_emulation=False,  # breaks Tk windows on macOS
     target_arch="universal2",
+    icon=ICON,
     upx=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="MediaTidy", upx=False)
 app = BUNDLE(
     coll,
     name="MediaTidy.app",
+    icon=ICON,
     bundle_identifier=BUNDLE_ID,
     version=VERSION,
     info_plist={

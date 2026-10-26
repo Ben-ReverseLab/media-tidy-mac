@@ -14,5 +14,6 @@ R=MediaTidy.app/Contents/Resources
 mkdir -p $R/en.lproj $R/de.lproj
 print '"NSRemovableVolumesUsageDescription" = "MediaTidy compares and copies photos on external drives.";' > $R/en.lproj/InfoPlist.strings
 print '"NSRemovableVolumesUsageDescription" = "MediaTidy vergleicht und kopiert Fotos auf externen Festplatten.";' > $R/de.lproj/InfoPlist.strings
+cp packaging/MediaTidy.icns $R/applet.icns  # same icon as the downloadable app
 codesign --force --deep -s - MediaTidy.app
 echo "MediaTidy.app built."
