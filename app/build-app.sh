@@ -5,8 +5,8 @@ cd "$(dirname "$0")/.."
 rm -rf MediaTidy.app
 osacompile -s -o MediaTidy.app app/MediaTidy.applescript  # -s: stays open while MediaTidy runs
 P=MediaTidy.app/Contents/Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.ben-reverselab.mediatidy" $P 2>/dev/null \
-  || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string io.github.ben-reverselab.mediatidy" $P
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.ben-reverselab.mediatidy.source" $P 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string io.github.ben-reverselab.mediatidy.source" $P
 /usr/libexec/PlistBuddy -c "Add :NSRemovableVolumesUsageDescription string 'MediaTidy compares and copies photos on external drives.'" $P
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" $P  # no second Dock icon next to Python
 # Permission prompt in German on German systems

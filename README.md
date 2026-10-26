@@ -145,7 +145,7 @@ app/build-app.sh                              # builds MediaTidy.app (a small la
 python3 -m mediatidy check                    # checks dependencies and drive access
 ```
 
-If Homebrew asks for it, run `sudo xcodebuild -license accept` first. Double-click the **`MediaTidy.app`** in the cloned folder and grant the permissions to it (not to Terminal); after rebuilding it you may have to grant Full Disk Access again. `MediaTidy.command` also works, but then Terminal needs the permissions. Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/MediaTidy.applescript`.
+If Homebrew asks for it, run `sudo xcodebuild -license accept` first. Double-click the **`MediaTidy.app`** in the cloned folder and grant the permissions to it (not to Terminal); after rebuilding it you may have to grant Full Disk Access again. It has its own app identifier (`…mediatidy.source`), so its permissions are separate from the downloadable app. `MediaTidy.command` also works, but then Terminal needs the permissions. Python code changes take effect after restarting the app; rebuilding is only needed after changes to `app/MediaTidy.applescript`.
 
 Settings defaults with explanations: `mediatidy/defaults.toml`; texts per language: `mediatidy/locales/`.
 
