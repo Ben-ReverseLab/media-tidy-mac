@@ -1,8 +1,10 @@
-// Draws the MediaTidy app icon and writes packaging/MediaTidy.icns.
-//   swift packaging/icon/make-icon.swift            (from the repository folder)
+// Draws the MediaTidy artwork: the app icon (packaging/MediaTidy.icns) and the GitHub social preview
+// (packaging/icon/social-preview.png, upload in the repository settings).
+//   swift packaging/icon/make-artwork.swift            (from the repository folder)
 // Motif: a loose pile of photos with a neat one on top, in the app colours
 // (blue = dry run, amber like a darkroom safelight = real run).
 import CoreGraphics
+import CoreText
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -51,13 +53,23 @@ func card(_ ctx: CGContext, cx: CGFloat, cy: CGFloat, angle: CGFloat, fill: CGCo
     ctx.restoreGState()
 }
 
-func drawIcon(size: Int) -> CGImage {
-    let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+func bitmap(width: Int, height: Int) -> CGContext {
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
     ctx.interpolationQuality = .high
+    return ctx
+}
 
+func drawIcon(size: Int) -> CGImage {
+    let ctx = bitmap(width: size, height: size)
+    ctx.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
+    drawIconArt(ctx)
+    return ctx.makeImage()!
+}
+
+/// The icon in Apple's 1024 × 1024 grid.
+func drawIconArt(_ ctx: CGContext) {
     // Rounded square on Apple's 1024 grid (824 pt body), with a soft drop shadow
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
     let shape = CGPath(roundedRect: body, cornerWidth: 186, cornerHeight: 186, transform: nil)
@@ -79,6 +91,44 @@ func drawIcon(size: Int) -> CGImage {
     card(ctx, cx: 532, cy: 488, angle: -9, fill: rgb(0xD9E6EC), photo: false)
     card(ctx, cx: 512, cy: 500, angle: 0, fill: white, photo: true)
     ctx.restoreGState()
+}
+
+/// Text block from the top-left corner (CoreGraphics counts y from the bottom); returns its height.
+@discardableResult
+func text(_ ctx: CGContext, _ string: String, font: String, size: CGFloat, color: CGColor,
+          x: CGFloat, top: CGFloat, width: CGFloat, height: CGFloat) -> CGFloat {
+    let attrs: [NSAttributedString.Key: Any] = [
+        NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName(font as CFString, size, nil),
+        NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
+    ]
+    let setter = CTFramesetterCreateWithAttributedString(NSAttributedString(string: string, attributes: attrs))
+    let fit = CTFramesetterSuggestFrameSizeWithConstraints(setter, CFRange(), nil,
+                                                           CGSize(width: width, height: height), nil)
+    let frame = CTFramesetterCreateFrame(setter, CFRange(),
+                                         CGPath(rect: CGRect(x: x, y: top - fit.height, width: width,
+                                                             height: fit.height), transform: nil), nil)
+    CTFrameDraw(frame, ctx)
+    return fit.height
+}
+
+/// GitHub social preview: 1280 × 640, icon + name + one sentence on a calm background.
+func drawSocialPreview() -> CGImage {
+    let ctx = bitmap(width: 1280, height: 640)
+    ctx.setFillColor(rgb(0xF5F6F4))
+    ctx.fill(CGRect(x: 0, y: 0, width: 1280, height: 640))
+    ctx.saveGState()
+    ctx.translateBy(x: 40, y: 80)
+    ctx.scaleBy(x: 480 / 1024, y: 480 / 1024)
+    drawIconArt(ctx)
+    ctx.restoreGState()
+    let x: CGFloat = 560, width: CGFloat = 640
+    var top: CGFloat = 470
+    top -= text(ctx, "MediaTidy", font: "Futura-Bold", size: 96, color: rgb(0x23272B),
+                x: x, top: top, width: width, height: 140) + 18
+    top -= text(ctx, "Back up, find duplicates and sort photos and videos by date, camera and lens.",
+                font: "HelveticaNeue", size: 38, color: rgb(0x40464D), x: x, top: top, width: width, height: 200) + 26
+    text(ctx, "Free and open source · macOS 13 or later", font: "HelveticaNeue-Medium", size: 28,
+         color: dry, x: x, top: top, width: width, height: 60)
     return ctx.makeImage()!
 }
 
@@ -96,6 +146,7 @@ for base in [16, 32, 128, 256, 512] {
     writePNG(drawIcon(size: base * 2), to: iconset.appendingPathComponent("icon_\(base)x\(base)@2x.png"))
 }
 writePNG(drawIcon(size: 1024), to: URL(fileURLWithPath: "packaging/icon/MediaTidy-1024.png"))
+writePNG(drawSocialPreview(), to: URL(fileURLWithPath: "packaging/icon/social-preview.png"))
 
 let iconutil = Process()
 iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
@@ -103,4 +154,4 @@ iconutil.arguments = ["-c", "icns", iconset.path, "-o", "packaging/MediaTidy.icn
 try iconutil.run()
 iconutil.waitUntilExit()
 guard iconutil.terminationStatus == 0 else { fatalError("iconutil failed") }
-print("Wrote packaging/MediaTidy.icns and packaging/icon/MediaTidy-1024.png")
+print("Wrote packaging/MediaTidy.icns, packaging/icon/MediaTidy-1024.png and packaging/icon/social-preview.png")
