@@ -899,8 +899,8 @@ def t_misc():
        o.stdout + o.stderr)
     o = cli("sync", "--source", str(Q), "--target", "/Volumes/MediaTidyDoesNotExist")
     ok("CLI missing drive → error code 2", o.returncode == 2 and "not connected" in o.stderr, o.stderr)
-    o = cli("check")
-    ok("CLI check runs", o.returncode == 0, o.stderr)
+    o = cli("check")  # 1 = hints found (e.g. a drive without access on this Mac), anything else = broken
+    ok("CLI check runs", o.returncode in (0, 1) and "Traceback" not in o.stderr, o.stdout + o.stderr)
 
 
 # --- 11. Lightroom warning ---------------------------------------------------------------------
