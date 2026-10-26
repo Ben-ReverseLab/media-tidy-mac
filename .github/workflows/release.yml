@@ -76,7 +76,7 @@ jobs:
       - name: Start the app from the disk image
         run: |
           [[ $(uname -m) == x86_64 ]]
-          shasum -a 256 -c "dist/MediaTidy-$VERSION.dmg.sha256" --ignore-missing
+          (cd dist && shasum -a 256 -c "MediaTidy-$VERSION.dmg.sha256")
           mnt=$(mktemp -d)
           hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "dist/MediaTidy-$VERSION.dmg"
           app="$mnt/MediaTidy.app"
