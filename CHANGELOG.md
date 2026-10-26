@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Colour themes: automatic (light or dark like macOS), light, dark, sand, sage, night blue and graphite (`ui.theme`, takes effect after a restart).
+
+### Changed
+- `mediatidy check` exits with code 1 when it finds problems.
+
+### Fixed
+- The shortcut hint at the bottom of the sidebar was cut off.
+
 ## [0.2.0] - 2026-10-18
 
 First public release.

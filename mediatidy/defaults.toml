@@ -167,5 +167,8 @@ lightroom_catalogs = ["~/Pictures/Lightroom/*.lrcat", "~/Pictures/Lightroom*/*.l
 [ui]
 # "auto" (macOS language) | "en" | "de" – takes effect after a restart
 language = "auto"
+# Colours: "system" (light or dark like macOS) | "light" | "dark" | "sand" | "sage" | "night" | "graphite" –
+# takes effect after a restart
+theme = "system"
 font_size = 13
 window = "1100x800"

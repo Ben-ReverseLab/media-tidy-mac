@@ -37,21 +37,82 @@ CHOICES = {
     "duplicates.keep": ["oldest", "newest", "shortest_path", "longest_path", "first"],
     "duplicates.action": ["report", "move", "trash"],
     "ui.language": ["auto", "en", "de"],
+    "ui.theme": ["system", "light", "dark", "sand", "sage", "night", "graphite"],
 }
 # Settings holding patterns: shown with placeholder names in the app language, stored in English
 PATTERN_SETTINGS = {"patterns.presets", "patterns.default", "patterns.filename"}
 STATE_FILE = "last_inputs.json"
 
-# Colours: calm paper grey; colour only where it means safety
-# (blue = dry run, amber like a darkroom safelight = real run).
-P = {
-    "paper": "#F5F6F4", "side": "#E8EAE7", "line": "#D3D7D4", "white": "#FFFFFF",
-    "graphite": "#23272B", "slate": "#646C75",
-    "dry": "#2D6784", "dry_dark": "#24546C", "dry_light": "#E2ECF1",
-    "real": "#E39A2D", "real_dark": "#CC8620", "real_light": "#FBEBD2",
-    "error": "#B3261E",
-    "thumb": "#868E96",  # scroll bar: clearly set off from the background
+# Colour themes. Every theme keeps the safety meaning of the accents
+# (blue = dry run, amber like a darkroom safelight = real run); "on_*" = text on an accent.
+# tests.ThemeTests checks that all themes have the same keys and readable contrast.
+THEMES = {
+    "light": {
+        "paper": "#F5F6F4", "side": "#E8EAE7", "line": "#D3D7D4", "field": "#FFFFFF",
+        "text": "#23272B", "muted": "#5E666F",
+        "dry": "#2D6784", "dry_dark": "#24546C", "dry_tint": "#E2ECF1", "on_dry": "#FFFFFF",
+        "real": "#E39A2D", "real_dark": "#CC8620", "real_tint": "#FBEBD2", "on_real": "#23272B",
+        "error": "#B3261E", "thumb": "#7A828A",
+    },
+    "dark": {
+        "paper": "#1F2123", "side": "#17191B", "line": "#3A3E42", "field": "#2B2E31",
+        "text": "#E8EAEC", "muted": "#A3AAB1",
+        "dry": "#5AA3CC", "dry_dark": "#4A92BB", "dry_tint": "#1E313C", "on_dry": "#10171C",
+        "real": "#E39A2D", "real_dark": "#CC8620", "real_tint": "#3A2D18", "on_real": "#1F2123",
+        "error": "#F28B82", "thumb": "#6E767E",
+    },
+    "sand": {
+        "paper": "#F3EEE4", "side": "#E7DFD1", "line": "#D3C8B4", "field": "#FFFDF8",
+        "text": "#2B2620", "muted": "#655B4E",
+        "dry": "#2D6784", "dry_dark": "#24546C", "dry_tint": "#E0E8EA", "on_dry": "#FFFFFF",
+        "real": "#E39A2D", "real_dark": "#CC8620", "real_tint": "#F8E4C4", "on_real": "#2B2620",
+        "error": "#A8241C", "thumb": "#857A6B",
+    },
+    "sage": {
+        "paper": "#EEF2EE", "side": "#DCE5DD", "line": "#C3D0C6", "field": "#FFFFFF",
+        "text": "#1F2A23", "muted": "#55645A",
+        "dry": "#2D6784", "dry_dark": "#24546C", "dry_tint": "#DDE9EE", "on_dry": "#FFFFFF",
+        "real": "#E39A2D", "real_dark": "#CC8620", "real_tint": "#FAEBD3", "on_real": "#1F2A23",
+        "error": "#A8241C", "thumb": "#6E7F73",
+    },
+    "night": {
+        "paper": "#1B2430", "side": "#141B24", "line": "#33404F", "field": "#243041",
+        "text": "#E4E9EF", "muted": "#9EACBC",
+        "dry": "#5AA3D6", "dry_dark": "#4A91C4", "dry_tint": "#1D3347", "on_dry": "#0F1720",
+        "real": "#E39A2D", "real_dark": "#CC8620", "real_tint": "#3A2E1C", "on_real": "#1B2430",
+        "error": "#F28B82", "thumb": "#5E6E82",
+    },
+    "graphite": {
+        "paper": "#3A3A3A", "side": "#2E2E2E", "line": "#505050", "field": "#464646",
+        "text": "#ECECEC", "muted": "#C2C2C2",
+        "dry": "#6FB2DD", "dry_dark": "#5EA1CC", "dry_tint": "#2F4553", "on_dry": "#15202A",
+        "real": "#E39A2D", "real_dark": "#CC8620", "real_tint": "#54442C", "on_real": "#2A2A2A",
+        "error": "#FFA198", "thumb": "#7A7A7A",
+    },
 }
+DARK_THEMES = {"dark", "night", "graphite"}
+P = dict(THEMES["light"])  # the active theme; set by apply_theme() before any widget is built
+
+
+def system_dark() -> bool:
+    """True when macOS currently uses the dark appearance."""
+    try:
+        out = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True,
+                             timeout=2).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.strip().lower() == "dark"
+
+
+def apply_theme(name: str) -> str:
+    """'system' | one of THEMES. Fills P and returns the theme now in use."""
+    if name not in THEMES:
+        name = "dark" if system_dark() else "light"
+    P.clear()
+    P.update(THEMES[name])
+    return name
+
+
 # Sidebar: (job or page key, index in the notebook); None = spacer
 NAV = [("sync", 0), ("duplicates", 1), ("sort", 2), None, ("history", 4), ("settings", 3)]
 JOBS = ["sync", "duplicates", "sort"]
@@ -91,9 +152,9 @@ def open_path(p: Path) -> None:
 
 def text_box(parent, **kw) -> tk.Text:
     """tk.Text styled like the other input fields."""
-    return tk.Text(parent, bg=P["white"], fg=P["graphite"], insertbackground=P["graphite"], relief="flat",
+    return tk.Text(parent, bg=P["field"], fg=P["text"], insertbackground=P["text"], relief="flat",
                    highlightthickness=1, highlightbackground=P["line"], highlightcolor=P["dry"],
-                   selectbackground=P["dry"], selectforeground=P["white"], padx=8, pady=6, **kw)
+                   selectbackground=P["dry"], selectforeground=P["on_dry"], padx=8, pady=6, **kw)
 
 
 class ChoiceVar:
@@ -156,7 +217,9 @@ class App:
         self.last_result: JobResult | None = None
         self.drive_hints: list = []
 
+        self.theme = apply_theme(cfg.get("ui.theme", "system"))
         root.title(f"MediaTidy {__version__}")
+        self._window_appearance(root)
         root.geometry(cfg.get("ui.window", "1100x800"))
         root.minsize(900, 640)
         root.configure(bg=P["paper"])
@@ -202,6 +265,15 @@ class App:
             self.log(t("gui.hints") + "\n" + "\n".join("• " + h for h in hints))
 
     # --- Look ----------------------------------------------------------------------
+    def _window_appearance(self, win: tk.Misc):
+        """Light or dark title bar to match the theme (macOS Tk only)."""
+        try:
+            win.update_idletasks()  # Tk 8.6 cannot set the appearance of a window that does not exist yet
+            win.tk.call("::tk::unsupported::MacWindowStyle", "appearance", win,
+                        "darkaqua" if self.theme in DARK_THEMES else "aqua")
+        except tk.TclError:
+            pass
+
     def _style(self, size: int):
         base = tk.font.nametofont("TkDefaultFont").actual("family")
         head = "Futura" if "Futura" in tk.font.families() else base
@@ -212,43 +284,43 @@ class App:
         }
         s = ttk.Style(self.root)
         s.theme_use("clam")
-        s.configure(".", background=P["paper"], foreground=P["graphite"], bordercolor=P["line"],
+        s.configure(".", background=P["paper"], foreground=P["text"], bordercolor=P["line"],
                     lightcolor=P["paper"], darkcolor=P["paper"], troughcolor=P["side"],
-                    focuscolor=P["dry"], selectbackground=P["dry"], selectforeground=P["white"],
-                    fieldbackground=P["white"], insertcolor=P["graphite"], arrowcolor=P["graphite"])
-        s.configure("Hint.TLabel", foreground=P["slate"], font=self.fonts["small"])
+                    focuscolor=P["dry"], selectbackground=P["dry"], selectforeground=P["on_dry"],
+                    fieldbackground=P["field"], insertcolor=P["text"], arrowcolor=P["text"])
+        s.configure("Hint.TLabel", foreground=P["muted"], font=self.fonts["small"])
         s.configure("Error.TLabel", foreground=P["error"], font=self.fonts["small"])
         s.configure("H1.TLabel", font=self.fonts["h1"])
         s.configure("H2.TLabel", font=self.fonts["h2"])
-        s.configure("TButton", padding=(12, 5), background=P["white"], bordercolor=P["line"],
-                    lightcolor=P["white"], darkcolor=P["white"])
+        s.configure("TButton", padding=(12, 5), background=P["field"], bordercolor=P["line"],
+                    lightcolor=P["field"], darkcolor=P["field"])
         s.map("TButton", background=[("disabled", P["paper"]), ("pressed", P["line"]), ("active", P["side"])],
-              foreground=[("disabled", P["slate"])], bordercolor=[("focus", P["dry"])],
+              foreground=[("disabled", P["muted"])], bordercolor=[("focus", P["dry"])],
               lightcolor=[("pressed", P["line"]), ("active", P["side"])],
               darkcolor=[("pressed", P["line"]), ("active", P["side"])])
-        for name, bg, dark, fg in (("Dry", P["dry"], P["dry_dark"], P["white"]),
-                                   ("Real", P["real"], P["real_dark"], P["graphite"])):
+        for name, bg, dark, fg in (("Dry", P["dry"], P["dry_dark"], P["on_dry"]),
+                                   ("Real", P["real"], P["real_dark"], P["on_real"])):
             s.configure(f"{name}.TButton", background=bg, foreground=fg, bordercolor=dark, lightcolor=bg,
                         darkcolor=bg, font=self.fonts["bold"], padding=(18, 7))
             s.map(f"{name}.TButton",
                   background=[("disabled", P["line"]), ("pressed", dark), ("active", dark)],
                   lightcolor=[("disabled", P["line"]), ("pressed", dark), ("active", dark)],
                   darkcolor=[("disabled", P["line"]), ("pressed", dark), ("active", dark)],
-                  foreground=[("disabled", P["slate"])], bordercolor=[("focus", P["graphite"])])
-        s.configure("TEntry", padding=(6, 4), lightcolor=P["white"], darkcolor=P["white"])
+                  foreground=[("disabled", P["muted"])], bordercolor=[("focus", P["text"])])
+        s.configure("TEntry", padding=(6, 4), lightcolor=P["field"], darkcolor=P["field"])
         s.map("TEntry", bordercolor=[("focus", P["dry"])], lightcolor=[("focus", P["dry"])])
-        s.configure("TCombobox", padding=(6, 3), background=P["white"], lightcolor=P["white"], darkcolor=P["white"])
-        s.map("TCombobox", fieldbackground=[("disabled", P["paper"]), ("readonly", P["white"])],
-              foreground=[("disabled", P["slate"])], background=[("active", P["side"])],
-              selectbackground=[("readonly", P["white"])], selectforeground=[("readonly", P["graphite"])],
+        s.configure("TCombobox", padding=(6, 3), background=P["field"], lightcolor=P["field"], darkcolor=P["field"])
+        s.map("TCombobox", fieldbackground=[("disabled", P["paper"]), ("readonly", P["field"])],
+              foreground=[("disabled", P["muted"])], background=[("active", P["side"])],
+              selectbackground=[("readonly", P["field"])], selectforeground=[("readonly", P["text"])],
               bordercolor=[("focus", P["dry"])])
-        self.root.option_add("*TCombobox*Listbox.background", P["white"])
+        self.root.option_add("*TCombobox*Listbox.background", P["field"])
         self.root.option_add("*TCombobox*Listbox.selectBackground", P["dry"])
-        self.root.option_add("*TCombobox*Listbox.selectForeground", P["white"])
-        s.configure("TCheckbutton", indicatorbackground=P["white"], indicatorforeground=P["dry"],
-                    upperbordercolor=P["slate"], lowerbordercolor=P["slate"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", P["on_dry"])
+        s.configure("TCheckbutton", indicatorbackground=P["field"], indicatorforeground=P["dry"],
+                    upperbordercolor=P["muted"], lowerbordercolor=P["muted"])
         s.map("TCheckbutton", background=[("active", P["paper"])],
-              indicatorbackground=[("selected", P["white"])])
+              indicatorbackground=[("selected", P["field"])])
         s.configure("Pages.TNotebook", borderwidth=0, tabmargins=0, padding=0)
         s.layout("Pages.TNotebook.Tab", [])  # hide the tabs – navigation is in the sidebar
         # Scroll bar without arrows, strong thumb on a light trough
@@ -256,9 +328,9 @@ class App:
             ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
         s.configure("Vertical.TScrollbar", troughcolor=P["side"], background=P["thumb"], bordercolor=P["side"],
                     lightcolor=P["thumb"], darkcolor=P["thumb"], gripcount=0, arrowsize=5)  # Tk 9 scales: ~17 px
-        s.map("Vertical.TScrollbar", background=[("pressed", P["graphite"]), ("active", P["slate"])],
-              lightcolor=[("pressed", P["graphite"]), ("active", P["slate"])],
-              darkcolor=[("pressed", P["graphite"]), ("active", P["slate"])])
+        s.map("Vertical.TScrollbar", background=[("pressed", P["text"]), ("active", P["muted"])],
+              lightcolor=[("pressed", P["text"]), ("active", P["muted"])],
+              darkcolor=[("pressed", P["text"]), ("active", P["muted"])])
         s.configure("Run.Horizontal.TProgressbar", background=P["dry"], troughcolor=P["side"],
                     bordercolor=P["side"], lightcolor=P["dry"], darkcolor=P["dry"], thickness=6)
         s.configure("Mode.Toolbutton", padding=(12, 5), font=self.fonts["bold"])
@@ -268,10 +340,10 @@ class App:
         side = tk.Frame(parent, bg=P["side"], width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        tk.Label(side, text="MediaTidy", font=self.fonts["h2"], bg=P["side"], fg=P["graphite"]
+        tk.Label(side, text="MediaTidy", font=self.fonts["h2"], bg=P["side"], fg=P["text"]
                  ).pack(anchor="w", padx=22, pady=(26, 0))
         tk.Label(side, text=t("gui.version", version=__version__), font=self.fonts["small"], bg=P["side"],
-                 fg=P["slate"]).pack(anchor="w", padx=22, pady=(0, 22))
+                 fg=P["muted"]).pack(anchor="w", padx=22, pady=(0, 22))
         self.nav_items: dict[int, tuple] = {}
         for item in NAV:
             if item is None:
@@ -282,7 +354,7 @@ class App:
             row.pack(fill="x")
             mark = tk.Frame(row, bg=P["side"], width=4)
             mark.pack(side="left", fill="y")
-            lbl = tk.Label(row, text=t(f"nav.{key}"), font=self.fonts["nav"], bg=P["side"], fg=P["slate"],
+            lbl = tk.Label(row, text=t(f"nav.{key}"), font=self.fonts["nav"], bg=P["side"], fg=P["muted"],
                            anchor="w", padx=18, pady=7, takefocus=1, highlightthickness=1,
                            highlightbackground=P["side"], highlightcolor=P["dry"])
             lbl.pack(side="left", fill="x", expand=True)
@@ -292,7 +364,7 @@ class App:
                 lbl.bind(k, lambda e, idx=idx: self.nb.select(idx))
             self.nav_items[idx] = (row, mark, lbl)
         # Wrap instead of clipping: the sidebar has a fixed width and Tk 9 renders text wider
-        tk.Label(side, text=t("gui.shortcuts"), font=self.fonts["small"], bg=P["side"], fg=P["slate"],
+        tk.Label(side, text=t("gui.shortcuts"), font=self.fonts["small"], bg=P["side"], fg=P["muted"],
                  wraplength=int(side.cget("width")) - 2 * 22, justify="left"
                  ).pack(side="bottom", anchor="w", padx=22, pady=18)
 
@@ -302,8 +374,8 @@ class App:
             on = idx == cur
             bg = P["paper"] if on else P["side"]
             row.configure(bg=bg)
-            mark.configure(bg=P["graphite"] if on else bg)
-            lbl.configure(bg=bg, fg=P["graphite"] if on else P["slate"], highlightbackground=bg)
+            mark.configure(bg=P["text"] if on else bg)
+            lbl.configure(bg=bg, fg=P["text"] if on else P["muted"], highlightbackground=bg)
         if hasattr(self, "run_frame"):  # settings: own footer instead of start/log
             if cur == 3:
                 self.run_frame.pack_forget()
@@ -450,10 +522,10 @@ class App:
     def _build_sync_tab(self):
         f = self._tab(t("nav.sync"), t("gui.sync_desc"))
         ttk.Label(f, text=t("gui.source_folders")).grid(row=2, column=0, sticky="nw", pady=(4, 4), padx=(0, 16))
-        self.sync_sources = tk.Listbox(f, height=4, width=10, selectmode="extended", bg=P["white"], fg=P["graphite"],
+        self.sync_sources = tk.Listbox(f, height=4, width=10, selectmode="extended", bg=P["field"], fg=P["text"],
                                        relief="flat", highlightthickness=1, highlightbackground=P["line"],
                                        highlightcolor=P["dry"], selectbackground=P["dry"],
-                                       selectforeground=P["white"], activestyle="none")
+                                       selectforeground=P["on_dry"], activestyle="none")
         self.sync_sources.grid(row=2, column=1, sticky="nsew", pady=4)
         bf = ttk.Frame(f)
         bf.grid(row=2, column=2, sticky="n", padx=(8, 0), pady=4)
@@ -523,9 +595,9 @@ class App:
         # Example path: shows live what the pattern looks like
         ex = tk.Frame(f, bg=P["side"])
         ex.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(16, 0))
-        tk.Label(ex, text=t("gui.example"), font=self.fonts["small"], bg=P["side"], fg=P["slate"]
+        tk.Label(ex, text=t("gui.example"), font=self.fonts["small"], bg=P["side"], fg=P["muted"]
                  ).pack(anchor="w", padx=12, pady=(8, 0))
-        self.sort_example = tk.Label(ex, font=self.fonts["mono"], bg=P["side"], fg=P["graphite"], anchor="w",
+        self.sort_example = tk.Label(ex, font=self.fonts["mono"], bg=P["side"], fg=P["text"], anchor="w",
                                      justify="left", wraplength=540)
         self.sort_example.pack(fill="x", padx=12, pady=(2, 10))
         self.sort_pattern.trace_add("write", lambda *_: self._update_example())
@@ -538,7 +610,7 @@ class App:
         try:
             r = PatternRenderer(self.cfg)
             path = r.folder(self.sort_pattern.get(), e, m) / r.filename(self.sort_fname.get(), e, m)
-            self.sort_example.configure(text=t("gui.example_line", path=str(path)), fg=P["graphite"])
+            self.sort_example.configure(text=t("gui.example_line", path=str(path)), fg=P["text"])
         except (PatternError, KeyError, ValueError, IndexError) as err:
             self.sort_example.configure(text=str(err).splitlines()[0], fg=P["error"])
 
@@ -655,7 +727,7 @@ class App:
         except (ValueError, PatternError) as e:
             messagebox.showerror(t("nav.settings"), str(e))
             return
-        old_language = self.cfg.get("ui.language")
+        old_look = (self.cfg.get("ui.language"), self.cfg.get("ui.theme"))
         for p, v in values.items():
             self.cfg.set(p, v)
         self.cfg.save()
@@ -663,8 +735,10 @@ class App:
         self.log(t("gui.settings_saved") + ("\n" + "\n".join(self.cfg.warnings) if self.cfg.warnings else ""))
         self._settings_note(t("gui.saved") + (" – " + t("gui.with_warnings") if self.cfg.warnings else ""))
         self._update_example()
-        if self.cfg.get("ui.language") != old_language:
+        if self.cfg.get("ui.language") != old_look[0]:
             messagebox.showinfo(t("nav.settings"), t("gui.restart_for_language"))
+        elif self.cfg.get("ui.theme") != old_look[1]:
+            messagebox.showinfo(t("nav.settings"), t("gui.restart_for_theme"))
 
     def _settings_reset(self):
         if messagebox.askyesno(t("gui.reset_title"), t("gui.reset_ask")):
@@ -683,9 +757,9 @@ class App:
         f.rowconfigure(2, weight=1)
         self.nb.add(f, text=t("nav.history"))
         self._header(f, t("nav.history"), t("gui.history_desc"))
-        self.hist = tk.Listbox(f, height=8, bg=P["white"], fg=P["graphite"], relief="flat", highlightthickness=1,
+        self.hist = tk.Listbox(f, height=8, bg=P["field"], fg=P["text"], relief="flat", highlightthickness=1,
                                highlightbackground=P["line"], highlightcolor=P["dry"], activestyle="none",
-                               selectbackground=P["dry"], selectforeground=P["white"], font=self.fonts["mono"])
+                               selectbackground=P["dry"], selectforeground=P["on_dry"], font=self.fonts["mono"])
         self.hist.grid(row=2, column=0, sticky="nsew")
         hist_bar = ttk.Scrollbar(f, orient="vertical", command=self.hist.yview)
         hist_bar.grid(row=2, column=1, sticky="ns")
@@ -808,18 +882,18 @@ class App:
             return
         self.banner.grid()
         real = kind == "real"
-        accent, light = (P["real"], P["real_light"]) if real else (P["dry"], P["dry_light"])
+        accent, light = (P["real"], P["real_tint"]) if real else (P["dry"], P["dry_tint"])
         for w in self.banner_parts:
             w.configure(bg=light)
         self.banner_mark.configure(bg=accent)
-        self.banner_title.configure(text=title, fg=P["graphite"])
-        self.banner_text.configure(text=text, fg=P["graphite"])
+        self.banner_title.configure(text=title, fg=P["text"])
+        self.banner_text.configure(text=text, fg=P["text"])
         s = ttk.Style(self.root)
-        s.configure("Mode.Toolbutton", background=light, foreground=P["slate"], bordercolor=accent,
+        s.configure("Mode.Toolbutton", background=light, foreground=P["muted"], bordercolor=accent,
                     lightcolor=light, darkcolor=light)
-        on_fg = P["graphite"] if self.dry_var.get() is False else P["white"]
+        on_fg = P["on_real"] if self.dry_var.get() is False else P["on_dry"]
         sel = P["real"] if not self.dry_var.get() else P["dry"]
-        s.map("Mode.Toolbutton", background=[("selected", sel), ("active", P["white"])],
+        s.map("Mode.Toolbutton", background=[("selected", sel), ("active", P["field"])],
               lightcolor=[("selected", sel)], darkcolor=[("selected", sel)],
               foreground=[("selected", on_fg)])
         s.configure("Run.Horizontal.TProgressbar", background=accent, lightcolor=accent, darkcolor=accent)
@@ -1015,6 +1089,7 @@ class App:
         """Show new names from the metadata; returns {placeholder: {name in file: target name}} or None."""
         win = tk.Toplevel(self.root, bg=P["paper"], padx=20, pady=16)
         win.title(t("gui.names_title"))
+        self._window_appearance(win)
         win.transient(self.root)
         win.columnconfigure(0, weight=1)
         ttk.Label(win, text=t("gui.names_heading"), style="H2.TLabel").grid(row=0, column=0, sticky="w")

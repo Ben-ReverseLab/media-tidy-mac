@@ -636,5 +636,50 @@ class CliTests(Base):
             self.assertEqual(cli.main(args), 1)
 
 
+
+def contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two #RRGGBB colours."""
+    def lum(h):
+        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+class ThemeTests(Base):
+    # (foreground, background, minimum ratio): 7 for body text, 4.5 for small/secondary text, 3 for UI parts
+    PAIRS = [("text", "paper", 7), ("text", "side", 7), ("text", "field", 7), ("text", "dry_tint", 7),
+             ("text", "real_tint", 7), ("muted", "paper", 4.5), ("muted", "side", 4.5), ("muted", "field", 4.5),
+             ("muted", "dry_tint", 4.5), ("muted", "real_tint", 4.5), ("on_dry", "dry", 4.5),
+             ("on_dry", "dry_dark", 4.5), ("on_real", "real", 4.5), ("on_real", "real_dark", 4.5),
+             ("error", "paper", 4.5), ("error", "side", 4.5), ("error", "field", 4.5),
+             ("dry", "paper", 3), ("dry", "field", 3), ("thumb", "side", 3)]
+
+    def test_themes_complete_and_readable(self):
+        from mediatidy.gui import CHOICES, DARK_THEMES, THEMES
+        keys = set(THEMES["light"])
+        self.assertEqual(set(CHOICES["ui.theme"]), set(THEMES) | {"system"})
+        self.assertLessEqual(DARK_THEMES, set(THEMES))
+        for name, pal in THEMES.items():
+            self.assertEqual(set(pal), keys, name)
+            for fg, bg, need in self.PAIRS:
+                self.assertGreaterEqual(contrast(pal[fg], pal[bg]), need, f"{name}: {fg} on {bg}")
+
+    def test_apply_theme_system_and_unknown(self):
+        from unittest import mock
+        from mediatidy import gui
+        try:
+            self.assertEqual(gui.apply_theme("sand"), "sand")
+            self.assertEqual(gui.P, gui.THEMES["sand"])
+            with mock.patch.object(gui, "system_dark", return_value=True):
+                self.assertEqual(gui.apply_theme("system"), "dark")
+                self.assertEqual(gui.apply_theme("nonsense"), "dark")
+            with mock.patch.object(gui, "system_dark", return_value=False):
+                self.assertEqual(gui.apply_theme("system"), "light")
+        finally:
+            gui.apply_theme("light")
+
+
 if __name__ == "__main__":
     unittest.main()
