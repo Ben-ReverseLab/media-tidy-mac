@@ -104,7 +104,7 @@ Without `--execute` every command is a dry run. `--yes` confirms trashing/overwr
 | `sort` | sort by metadata (`--pattern`, `--filename`, `--move`) |
 | `undo` | undo the last run (`--file` for a specific journal) |
 | `profiles` | list saved profiles |
-| `check` | check dependencies and drive access |
+| `check` | check dependencies and drive access (exit code 1 if there are problems) |
 
 ## Files
 
@@ -119,17 +119,17 @@ Without `--execute` every command is a dry run. `--yes` confirms trashing/overwr
 | `~/.mediatidy/cache.db` | Checksum cache (makes repeated runs fast; safe to delete) |
 | `~/.mediatidy/logs/` | Log files |
 
-Settings, profiles and journals written by earlier versions (German names) are converted automatically.
-
 ## Development
 
 - Python standard library + tkinter only; external tools: exiftool (and Finder via `osascript`).
 - Code, comments and data formats are English; user-facing texts live in `mediatidy/locales/*.toml` (same keys in every language, checked by a test).
 - New setting: add it with a comment to `defaults.toml` → it appears automatically on the Settings page (English help = the comment; German label/help: `setting.<key>` / `help.<key>` in `de.toml`).
 - Incompatible config change: increase `CONFIG_VERSION` in `config.py` and add a function to `MIGRATIONS`.
-- Unit tests (about a second): `python3 -m unittest discover -s tests` – GitHub Actions runs them on every push (`.github/workflows/tests.yml`).
+- Unit tests (about a second): `python3 -m unittest discover -s tests` – GitHub Actions runs them on every push to `main` and on pull requests (`.github/workflows/tests.yml`).
 - Real-world check with generated photos/videos and disk images: `python3 tests/real_world_check.py` (3–5 min, needs exiftool and ffmpeg). **It moves test files into your real Finder Trash** and mounts temporary disk images.
 
 ## License
 
 [MIT](LICENSE)
+
+Not affiliated with or endorsed by Apple or Adobe. Apple, macOS, Finder and Apple Photos are trademarks of Apple Inc.; Lightroom is a trademark of Adobe.
