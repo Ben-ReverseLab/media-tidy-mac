@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Colour themes: automatic (light or dark like macOS), light, dark, sand, sage, night blue and graphite (`ui.theme`, takes effect after a restart).
+- HTML report: filter the table by status (drop-down next to the text filter, with counts).
 
 ### Changed
 - `mediatidy check` exits with code 1 when it finds problems.

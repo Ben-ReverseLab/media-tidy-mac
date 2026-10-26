@@ -99,6 +99,7 @@
 "report.dry_note" = "Probelauf – es wurde nichts verändert."
 "report.created" = "Erstellt: {time}"
 "report.filter" = "Filtern…"
+"report.all_statuses" = "Alle Status ({n})"
 
 # --- Auswahlwerte ---
 "choice.hash" = "Inhalt (Prüfsumme)"

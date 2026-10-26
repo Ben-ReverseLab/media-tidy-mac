@@ -281,7 +281,8 @@ class Job:
         res.summary["dry_run"] = t("yes") if res.dry_run else t("no")
         headers, rows = table(res)
         res.reports = write_report(self.cfg, report_dirs(self.cfg, target, res.dry_run), self.name,
-                                   res.title, summary_items(res), headers, rows, res.dry_run)
+                                   res.title, summary_items(res), headers, rows, res.dry_run,
+                                   res.columns.index("status") if "status" in res.columns else None)
         return res
 
     def finish_cancelled(self, dry_run: bool) -> JobResult:

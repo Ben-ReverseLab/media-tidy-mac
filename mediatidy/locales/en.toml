@@ -99,6 +99,7 @@
 "report.dry_note" = "Dry run – nothing was changed."
 "report.created" = "Created: {time}"
 "report.filter" = "Filter…"
+"report.all_statuses" = "All statuses ({n})"
 
 # --- Choices ---
 "choice.hash" = "content (checksum)"

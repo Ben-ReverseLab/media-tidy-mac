@@ -168,6 +168,18 @@ class LanguageTests(Base):
         self.assertIn('lang="de"', html)
         self.assertIn("Probelauf – es wurde nichts verändert.", html)
 
+    def test_report_status_filter(self):
+        src, dst = self.tmp / "src", self.tmp / "dst"
+        write(src / "a.jpg", b"a" * 100)
+        write(src / "b.jpg", b"b" * 100)
+        write(dst / "b.jpg", b"b" * 100)
+        res = run_job(self.cfg, self.ctx, "sync", SyncParams([str(src)], str(dst), dry_run=True))
+        self.assertGreater(len(statuses(res)), 1)
+        html = next(r for r in res.reports if r.suffix == ".html").read_text()
+        self.assertIn('<select id="s">', html)
+        self.assertIn(i18n.t("report.all_statuses", n=len(res.rows)), html)
+        self.assertEqual(html.count("<tr data-status="), len(res.rows))
+
 
 class PatternTests(Base):
     def test_render(self):
