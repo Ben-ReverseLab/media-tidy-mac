@@ -4,6 +4,8 @@
 
 A macOS app for photographers: compare photos and videos between folders and drives, find duplicates, and sort files into folders by their metadata (capture date, camera, lens …).
 
+![MediaTidy – Sync page](docs/images/sync.png)
+
 - **Content-based** – files are compared by checksum, not by name.
 - **Safe by default** – every run is a dry run unless you explicitly execute it; every real action is logged and can be undone.
 - **Library-aware** – reads the originals inside Apple Photos (`.photoslibrary`) and Lightroom (`.lrlibrary`) libraries without ever modifying them, and warns before moving files that a Lightroom Classic catalog uses.
@@ -54,6 +56,11 @@ Open **MediaTidy** from Applications.
 | Sort | Copy or move files into a folder structure by capture date, camera, lens, type …, optionally renaming them. |
 | Settings | All options, generated from `defaults.toml` with explanations. |
 | History | Every real run is logged and can be undone. |
+
+<p>
+  <img src="docs/images/duplicates.png" alt="Duplicates page" width="49%">
+  <img src="docs/images/sort.png" alt="Sort page" width="49%">
+</p>
 
 - **Dry run** is on by default: shows what would happen, as an HTML/CSV report.
 - **Empty files** (0 bytes) are reported as “probably damaged” and neither compared nor copied.
