@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "check":
         hints = check(cfg)
         print("\n".join(hints) if hints else t("cli.all_good"))
-        return 0
+        return 1 if hints else 0
     if a.cmd == "profiles":
         for n in Profiles(cfg).names():
             print(n)

@@ -5,21 +5,30 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   unit-tests:
     runs-on: macos-latest
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13"]
+        python-version: ["3.11", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install exiftool
+        run: brew install exiftool
       - name: Compile all modules
         run: python -m compileall -q mediatidy tests
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+      - name: Import the GUI module
+        run: python -c "import mediatidy.gui"
       - name: Command line smoke test
         run: |
           python -m mediatidy --help

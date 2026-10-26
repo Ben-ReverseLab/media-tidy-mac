@@ -624,5 +624,17 @@ class SmallFindingsTests(Base):
         self.assertTrue((src / "a.jpg").exists())
 
 
+
+class CliTests(Base):
+    def test_check_exit_code_reflects_hints(self):
+        from unittest import mock
+        from mediatidy import __main__ as cli
+        args = ["--config-dir", str(self.tmp / "cfg"), "check"]
+        with mock.patch.object(cli, "check", return_value=[]), mock.patch("builtins.print"):
+            self.assertEqual(cli.main(args), 0)
+        with mock.patch.object(cli, "check", return_value=["no exiftool"]), mock.patch("builtins.print"):
+            self.assertEqual(cli.main(args), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
