@@ -1,6 +1,9 @@
 # MediaTidy
 
 [![Tests](https://github.com/Ben-ReverseLab/media-tidy-mac/actions/workflows/tests.yml/badge.svg)](https://github.com/Ben-ReverseLab/media-tidy-mac/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/Ben-ReverseLab/media-tidy-mac)](https://github.com/Ben-ReverseLab/media-tidy-mac/releases/latest)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Ben-ReverseLab/media-tidy-mac/badge)](https://scorecard.dev/viewer/?uri=github.com/Ben-ReverseLab/media-tidy-mac)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 A macOS app for photographers: compare photos and videos between folders and drives, find duplicates, and sort files into folders by their metadata (capture date, camera, lens …).
 
